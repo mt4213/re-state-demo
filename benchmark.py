@@ -6,6 +6,7 @@ import time
 import argparse
 import urllib.request
 import urllib.error
+import re
 from datetime import datetime
 
 STATE_FILE = "agent-core/state/messages.json"
@@ -80,6 +81,108 @@ def detect_workspace_changes():
     return created
 
 
+def collect_experiment_metadata():
+    metadata = {
+        "independent_variables": {
+            "system_prompt": None,
+            "temperature": None,
+            "model": None,
+            "max_tokens": None
+        },
+        "constants": {
+            "context_window": None,
+            "gpu_layers": None,
+            "quantization": None,
+            "max_generation": None
+        }
+    }
+
+    try:
+        if os.path.exists("agent-core/.env"):
+            with open("agent-core/.env", "r") as f:
+                for line in f:
+                    if line.startswith("LLM_MODEL="):
+                        val = line.strip().split("=", 1)[1]
+                        if val.startswith("openai/"):
+                            val = val[len("openai/"):]
+                        metadata["independent_variables"]["model"] = val
+                    elif line.startswith("LLM_MAX_TOKENS="):
+                        val = line.strip().split("=", 1)[1]
+                        try:
+                            metadata["independent_variables"]["max_tokens"] = int(val)
+                        except ValueError:
+                            pass
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists("agent-core/re_cur.py"):
+            with open("agent-core/re_cur.py", "r") as f:
+                content = f.read()
+                match = re.search(r'SYSTEM_PROMPT\s*=\s*(["\'])(.*?)\1', content)
+                if match:
+                    metadata["independent_variables"]["system_prompt"] = match.group(2)
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists("agent-core/re_lay.py"):
+            with open("agent-core/re_lay.py", "r") as f:
+                content = f.read()
+                temp_match = re.search(r'"temperature"\s*:\s*([0-9.]+)', content)
+                if temp_match:
+                    try:
+                        metadata["independent_variables"]["temperature"] = float(temp_match.group(1))
+                    except ValueError:
+                        pass
+                
+                if metadata["independent_variables"]["max_tokens"] is None:
+                    mt_match = re.search(r'DEFAULT_MAX_TOKENS\s*=\s*(\d+)', content)
+                    if mt_match:
+                        try:
+                            metadata["independent_variables"]["max_tokens"] = int(mt_match.group(1))
+                        except ValueError:
+                            pass
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists("docker_run.sh"):
+            with open("docker_run.sh", "r") as f:
+                content = f.read()
+                
+                c_match = re.search(r'-c\s+(\d+)', content)
+                if c_match:
+                    try:
+                        metadata["constants"]["context_window"] = int(c_match.group(1))
+                    except ValueError:
+                        pass
+                        
+                n_match = re.search(r'-n\s+(\d+)', content)
+                if n_match:
+                    try:
+                        metadata["constants"]["max_generation"] = int(n_match.group(1))
+                    except ValueError:
+                        pass
+                        
+                gpu_match = re.search(r'--n-gpu-layers\s+(\d+)', content)
+                if gpu_match:
+                    try:
+                        metadata["constants"]["gpu_layers"] = int(gpu_match.group(1))
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+
+    model = metadata["independent_variables"]["model"]
+    if model:
+        q_match = re.search(r'(Q\d+_K_\w+|Q\d+)', model)
+        if q_match:
+            metadata["constants"]["quantization"] = q_match.group(1)
+
+    return metadata
+
+
 def run_analyzer():
     """Invokes the Phase 1 analyzer to grade the run."""
     result = subprocess.run(["python3", "analyze_session.py"], capture_output=True, text=True)
@@ -102,6 +205,10 @@ def main(num_runs):
         print("ERROR: LLM server is not reachable at http://127.0.0.1:8080/health")
         print("Start it first, e.g.: python -m restart --config restart/config.json")
         sys.exit(1)
+
+    metadata = collect_experiment_metadata()
+    metadata["num_runs"] = num_runs
+    metadata["timestamp"] = datetime.now().isoformat()
 
     print(f"=== Starting Automated Agency Benchmark ({num_runs} runs) ===")
 
@@ -185,7 +292,7 @@ def main(num_runs):
     # Dump the experiment log
     out_file = os.path.join(RESULTS_DIR, f"results_{int(time.time())}.json")
     with open(out_file, "w") as f:
-        json.dump(results, f, indent=4)
+        json.dump({"experiment": metadata, "runs": results}, f, indent=4)
 
     print(f"\n=== Benchmark Complete. Results saved to {out_file} ===")
 

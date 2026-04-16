@@ -9,3 +9,5 @@ eval_results/
 .snapshot/
 download_models.sh
 scripts/
+docker_run.sh
+run_experiments.sh

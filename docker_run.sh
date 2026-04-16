@@ -13,5 +13,6 @@ exec docker run --rm --name recur-llama-daemon --gpus all \
   -v /home/user_a/llama/models:/models \
   -p 8080:8080 ghcr.io/ggml-org/llama.cpp:server-cuda \
   -m "/models/${MODEL_FILENAME}" \
-  --port 8080 --host 0.0.0.0 -c 8042 -n 900 --n-gpu-layers 99 \
-  --parallel 1 -ctk q4_1 -ctv q4_1 -fa on --log-disable --defrag-thold 0.1
+  --port 8080 --host 0.0.0.0 -c 8042 -n 900 --n-gpu-layers 16 \
+  --batch-size 512 \
+  --parallel 1 --defrag-thold 0.1 -fa on

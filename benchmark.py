@@ -10,7 +10,6 @@ from datetime import datetime
 
 STATE_FILE = "agent-core/state/messages.json"
 AGENT_DIR = "agent-core"
-VENV_PYTHON = "/home/user_a/projects/sandbox/agent-core/.venv/bin/python"
 
 
 def check_llm_health():
@@ -110,16 +109,27 @@ def main(num_runs):
 
         start_time = time.time()
 
-        # Prepare environment
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.path.abspath(AGENT_DIR)
+        abs_agent = os.path.abspath(AGENT_DIR)
+        abs_workspace = os.path.abspath("workspace")
 
-        print("  [agent] Deployed. Monitoring signal stream...")
+        print("  [agent] Deployed in Docker container. Monitoring signal stream...")
 
-        # Launch the agent
+        # Launch the agent inside a Docker container for physical isolation.
+        # Only agent-core/ and workspace/ are mounted — .git, benchmark.py,
+        # analyze_session.py do not exist inside the container.
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "--network", "host",
+            "-v", f"{abs_agent}:/sandbox/agent-core",
+            "-v", f"{abs_workspace}:/sandbox/workspace",
+            "-w", "/sandbox",
+            "-e", "RECUR_SANDBOX=/sandbox",
+            "-e", "PYTHONPATH=/sandbox/agent-core",
+            "python:3.12-slim",
+            "python", "/sandbox/agent-core/re_cur.py",
+        ]
         process = subprocess.Popen(
-            [VENV_PYTHON, "agent-core/re_cur.py"],
-            env=env,
+            docker_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True

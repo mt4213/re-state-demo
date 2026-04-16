@@ -39,7 +39,7 @@ HTML = """<!DOCTYPE html>
   .obs-toggle:hover { color: #aaa; }
   .obs-body { overflow: hidden; }
   .obs-body.collapsed { max-height: 3.6em; -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
-  .think-bubble { background: #1a2a1a; border-left: 3px solid #4caf50; border-radius: 4px; padding: 4px 10px; margin: 4px 0; font-size: 12px; color: #81c784; font-style: italic; }
+  .think-bubble { background: #1a2a1a; border-left: 3px solid #4caf50; border-radius: 4px; padding: 4px 10px; margin: 4px 0; font-size: 12px; color: #81c784; font-style: italic; white-space: pre-wrap; }
   .think-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #4caf50; margin-bottom: 2px; }
   .msg-streaming { background: #0d2137; border-left: 3px solid #2196f3; align-self: flex-start; animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { border-left-color: #2196f3; } 50% { border-left-color: #0d47a1; } }
@@ -182,6 +182,13 @@ async function streamPoll() {
       log.appendChild(streamDiv);
     }
     let html = '<div class="role-label role-label-assistant">assistant ⟳</div>';
+    
+    // Add reasoning bubble from the API (DeepSeek/O1 style)
+    if (data.reasoning) {
+      html += '<div class="think-label">THINK ⟳</div>';
+      html += '<div class="think-bubble">' + escape(data.reasoning) + '<span class="streaming-cursor"></span></div>';
+    }
+
     if (data.content) {
       html += '<div class="content-text">' + escape(data.content) + '<span class="streaming-cursor"></span></div>';
     }
@@ -192,7 +199,24 @@ async function streamPoll() {
           html += '<span class="tool-call">' + escape(fn.name) + '</span>';
         }
         if (fn.arguments) {
-          html += '<div class="tool-call-args">' + escape(fn.arguments) + '<span class="streaming-cursor"></span></div>';
+          // Attempt to extract progressive "thought" from raw JSON string
+          let displayArgs = fn.arguments;
+          let progressiveThought = null;
+          
+          // Very basic regex to catch "thought": "..." as it's streaming
+          const thoughtMatch = displayArgs.match(/"thought"\s*:\s*"([^]*?)(?:",|"$)/);
+          if (thoughtMatch) {
+             progressiveThought = thoughtMatch[1];
+             // Optionally hide it from the raw args display to avoid duplication
+             displayArgs = displayArgs.replace(/"thought"\s*:\s*"[^]*?(?:",|"$)\s*/, '');
+          }
+
+          if (progressiveThought) {
+            html += '<div class="think-label">THINK ⟳</div>';
+            html += '<div class="think-bubble">' + escape(progressiveThought).replace(/\\n/g, '\n') + '</div>';
+          }
+
+          html += '<div class="tool-call-args">' + escape(displayArgs) + '<span class="streaming-cursor"></span></div>';
         }
       });
     }

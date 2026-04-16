@@ -59,8 +59,8 @@ def _write_stream(data, force=False):
         json.dump(data, f, ensure_ascii=False)
     os.replace(tmp, STREAM_FILE)
 
-def _stream_callback(content, tool_calls):
-    _write_stream({"content": content, "tool_calls": tool_calls, "done": False})
+def _stream_callback(content, tool_calls, reasoning=None):
+    _write_stream({"content": content, "tool_calls": tool_calls, "reasoning": reasoning, "done": False})
 MAX_REPEATED_TOOL_TURNS = 4
 # Approximate char budget for messages (rough: 1 token ≈ 4 chars).
 # With -c 8192 and max_tokens=512, we have ~7680 tokens for input ≈ 30720 chars.
@@ -137,7 +137,7 @@ def main():
 
         # Send to LLM
         # Signal stream start
-        _write_stream({"content": "", "tool_calls": [], "done": False}, force=True)
+        _write_stream({"content": "", "tool_calls": [], "reasoning": "", "done": False}, force=True)
         response = re_lay.send_stream(messages, on_chunk=_stream_callback)
         # Signal stream complete
         _write_stream({"done": True}, force=True)

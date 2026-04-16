@@ -131,6 +131,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             accumulated_content = ""
+            accumulated_reasoning = ""
             tool_calls_acc = {}
             for line in resp:
                 line = line.decode("utf-8").strip()
@@ -146,6 +147,9 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
                         
                         if "content" in delta and delta["content"]:
                             accumulated_content += delta["content"]
+                        
+                        if "reasoning_content" in delta and delta["reasoning_content"]:
+                            accumulated_reasoning += delta["reasoning_content"]
                         
                         if "tool_calls" in delta:
                             for tc_delta in delta["tool_calls"]:
@@ -163,7 +167,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
                                     if "arguments" in fn:
                                         tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
                         
-                        on_chunk(accumulated_content, list(tool_calls_acc.values()))
+                        on_chunk(accumulated_content, list(tool_calls_acc.values()), accumulated_reasoning)
                     except (json.JSONDecodeError, KeyError, IndexError):
                         pass
 

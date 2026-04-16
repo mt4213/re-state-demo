@@ -139,8 +139,6 @@ def main():
         # Signal stream start
         _write_stream({"content": "", "tool_calls": [], "reasoning": "", "done": False}, force=True)
         response = re_lay.send_stream(messages, on_chunk=_stream_callback)
-        # Signal stream complete
-        _write_stream({"done": True}, force=True)
 
         if response.get("error"):
             err = response["error"]
@@ -168,11 +166,14 @@ def main():
                     ),
                 })
                 persist_state(messages)
+                _write_stream({"done": True}, force=True)
                 continue
             no_tool_count += 1
             if no_tool_count >= MAX_NO_TOOL_TURNS:
                 logger.error("Circuit breaker: %d consecutive failures. Halting.", no_tool_count)
+                _write_stream({"done": True}, force=True)
                 sys.exit(1)
+            _write_stream({"done": True}, force=True)
             continue
 
         # Build assistant message
@@ -190,6 +191,8 @@ def main():
             assistant_msg["tool_calls"] = tool_calls
 
         messages.append(assistant_msg)
+        persist_state(messages)
+        _write_stream({"done": True}, force=True)
 
         if tool_calls:
             no_tool_count = 0

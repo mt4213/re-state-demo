@@ -2,11 +2,11 @@
 
 import json
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "messages.json")
 STREAM_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "stream.json")
-PORT = 5000
+PORT = int(os.environ.get("PORT", 5050))
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -25,9 +25,11 @@ HTML = r"""<!DOCTYPE html>
   .msg { border-radius: 8px; padding: 10px 14px; max-width: 860px; word-break: break-word; }
   .msg-system { background: #1a1a1a; border-left: 3px solid #555; color: #888; font-style: italic; font-size: 12px; }
   .msg-system:empty, .msg-system.hidden { display: none; }
+  .msg-user { background: #18251a; border-left: 3px solid #4caf50; align-self: flex-end; color: #e6f4ea; }
   .msg-assistant { background: #0d2137; border-left: 3px solid #2196f3; align-self: flex-start; }
   .msg-tool { background: #111; border-left: 3px solid #444; font-family: monospace; font-size: 12px; color: #b0b0b0; white-space: pre-wrap; align-self: flex-start; }
   .role-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
+  .role-label-user { color: #81c784; }
   .role-label-assistant { color: #2196f3; }
   .role-label-tool { color: #777; }
   .role-label-system { color: #555; }
@@ -56,15 +58,16 @@ HTML = r"""<!DOCTYPE html>
 <script>
 const log = document.getElementById('log');
 const status = document.getElementById('status');
-let lastCount = -1;
+let lastState = "";
 
 function escape(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function render(messages) {
-  if (messages.length === lastCount) return;
-  lastCount = messages.length;
+  const currentState = JSON.stringify(messages);
+  if (currentState === lastState) return;
+  lastState = currentState;
   log.innerHTML = '';
   if (!messages.length) { log.innerHTML = '<div id="empty">No messages yet.</div>'; return; }
   messages.forEach(msg => {
@@ -97,6 +100,17 @@ function render(messages) {
     } else if (role === 'assistant') {
       label.textContent = 'assistant';
       div.appendChild(label);
+      const thoughtStr = msg.reasoning || msg._thought;
+      if (thoughtStr) {
+        const tl = document.createElement('div');
+        tl.className = 'think-label';
+        tl.textContent = 'THINK';
+        div.appendChild(tl);
+        const tb = document.createElement('div');
+        tb.className = 'think-bubble';
+        tb.textContent = thoughtStr;
+        div.appendChild(tb);
+      }
       if (msg.content) {
         const c = document.createElement('div');
         c.className = 'content-text';
@@ -136,11 +150,21 @@ function render(messages) {
       c.className = 'content-text';
       c.textContent = msg.content || '(empty)';
       div.appendChild(c);
+    } else if (role === 'user') {
+      label.textContent = 'user';
+      div.appendChild(label);
+      const c = document.createElement('div');
+      c.className = 'content-text';
+      c.textContent = msg.content || '(empty)';
+      div.appendChild(c);
     } else {
       div.textContent = JSON.stringify(msg);
     }
     log.appendChild(div);
   });
+  if (typeof streamDiv !== 'undefined' && streamDiv) {
+    log.appendChild(streamDiv);
+  }
   window.scrollTo(0, document.body.scrollHeight);
 }
 
@@ -148,7 +172,12 @@ async function poll() {
   try {
     const r = await fetch('/messages');
     if (!r.ok) throw new Error(r.status);
-    const data = await r.json();
+    let data;
+    try {
+      data = await r.json();
+    } catch (_) {
+      return;
+    }
     render(data);
     status.textContent = 'live · ' + data.length + ' messages';
     status.className = 'live';
@@ -220,7 +249,7 @@ async function streamPoll() {
         }
       });
     }
-    if (!data.content && (!data.tool_calls || !data.tool_calls.length)) {
+    if (!data.reasoning && !data.content && (!data.tool_calls || !data.tool_calls.length)) {
       html += '<div class="content-text"><span class="streaming-cursor"></span></div>';
     }
     streamDiv.innerHTML = html;
@@ -235,7 +264,7 @@ streamInterval = setInterval(streamPoll, 150);
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
+    def log_message(self, format, *args):
         pass  # silence access logs
 
     def do_GET(self):
@@ -271,6 +300,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"re_view running at http://127.0.0.1:{PORT}")
     server.serve_forever()

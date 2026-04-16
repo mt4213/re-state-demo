@@ -180,6 +180,11 @@ def main():
         assistant_msg: dict[str, typing.Any] = {"role": "assistant"}
         content = response.get("content")
         tool_calls = response.get("tool_calls")
+        reasoning = response.get("reasoning")
+
+        if reasoning:
+            assistant_msg["reasoning"] = reasoning
+            _signal.info("[THINK] %s", reasoning[:300].replace('\n', '\\n'))
 
         if content:
             assistant_msg["content"] = content
@@ -189,6 +194,9 @@ def main():
 
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
+
+        if not tool_calls and not reasoning and content:
+            assistant_msg["_thought"] = ("[Systematic internal trace: Plaintext reasoning] " + content[:200] + "...")
 
         messages.append(assistant_msg)
         persist_state(messages)
@@ -212,6 +220,8 @@ def main():
                     if thought:
                         _signal.info("[THINK] %s", thought.replace('\n', '\\n'))
                         tc["_thought"] = thought
+                    else:
+                        tc["_thought"] = "[Systematic internal trace: Action executed without explicit thought parameter]"
                     # Clean display without thought field
                     display_args = json.dumps(args_dict, ensure_ascii=False)[:120]
                     # Rewrite the tool call arguments without thought to save context

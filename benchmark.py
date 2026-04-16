@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import shutil
 import subprocess
 import time
 import argparse
@@ -10,9 +11,11 @@ import re
 from datetime import datetime
 
 STATE_FILE = "agent-core/state/messages.json"
+STREAM_FILE = "agent-core/state/stream.json"
 AGENT_DIR = "agent-core"
 RESULTS_DIR = "eval_results"
 DIFFS_DIR = os.path.join(RESULTS_DIR, "diffs")
+CHATS_DIR = os.path.join(RESULTS_DIR, "chats")
 
 
 def check_llm_health():
@@ -29,6 +32,25 @@ def clear_state():
     """Wipes the agent's memory to ensure a pristine cold boot."""
     if os.path.exists(STATE_FILE):
         os.remove(STATE_FILE)
+    if os.path.exists(STREAM_FILE):
+        os.remove(STREAM_FILE)
+
+
+def save_chat_state(run_id, timestamp):
+    """Preserves the review chat state for a completed run."""
+    os.makedirs(CHATS_DIR, exist_ok=True)
+
+    if os.path.exists(STATE_FILE):
+        shutil.copy2(
+            STATE_FILE,
+            os.path.join(CHATS_DIR, f"run{run_id}_{timestamp}_messages.json")
+        )
+
+    if os.path.exists(STREAM_FILE):
+        shutil.copy2(
+            STREAM_FILE,
+            os.path.join(CHATS_DIR, f"run{run_id}_{timestamp}_stream.json")
+        )
 
 
 def git_restore():
@@ -218,6 +240,7 @@ def main(num_runs):
     # Ensure results directories exist
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(DIFFS_DIR, exist_ok=True)
+    os.makedirs(CHATS_DIR, exist_ok=True)
 
     if not check_llm_health():
         print("ERROR: LLM server is not reachable at http://127.0.0.1:8080/health")
@@ -272,6 +295,7 @@ def main(num_runs):
                 print("    " + line.strip().replace(">> ", ""))
 
         process.wait()
+        save_chat_state(i + 1, int(time.time()))
         duration = time.time() - start_time
 
         # Analyze the trajectory

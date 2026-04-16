@@ -32,7 +32,7 @@ TOOLS = [
                         "description": "The bash command to execute."
                     }
                 },
-                "required": ["command"]
+                "required": ["thought", "command"]
             }
         }
     },
@@ -53,7 +53,7 @@ TOOLS = [
                         "description": "Absolute path to the file to read."
                     }
                 },
-                "required": ["path"]
+                "required": ["thought", "path"]
             }
         }
     },
@@ -78,7 +78,7 @@ TOOLS = [
                         "description": "The content to write."
                     }
                 },
-                "required": ["path", "content"]
+                "required": ["thought", "path", "content"]
             }
         }
     }
@@ -175,6 +175,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
             return {
                 "content": accumulated_content or None,
                 "tool_calls": final_tool_calls if final_tool_calls else None,
+                "reasoning": accumulated_reasoning or None,
                 "error": None
             }
     except urllib.error.HTTPError as e:

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+agent-core/.venv/
+agent-core/state/messages.json
+agent-core/__pycache__/
+agent-core/tools/__pycache__/
+logs/
+eval_results_*.json
+.snapshot/

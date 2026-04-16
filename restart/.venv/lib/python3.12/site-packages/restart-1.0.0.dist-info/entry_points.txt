@@ -1,0 +1,2 @@
+[console_scripts]
+restart-daemon = restart.daemon:main

@@ -8,7 +8,7 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "
 STREAM_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "stream.json")
 PORT = 5000
 
-HTML = """<!DOCTYPE html>
+HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">

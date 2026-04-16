@@ -41,7 +41,26 @@ _signal.setLevel(logging.INFO)
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 STATE_FILE = os.path.join(STATE_DIR, "messages.json")
+STREAM_FILE = os.path.join(STATE_DIR, "stream.json")
 MAX_NO_TOOL_TURNS = 3
+
+_last_stream_write = 0.0
+
+def _write_stream(data, force=False):
+    """Write streaming state to disk, throttled to ~20 writes/sec."""
+    global _last_stream_write
+    now = time.monotonic()
+    if not force and now - _last_stream_write < 0.05:
+        return
+    _last_stream_write = now
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = STREAM_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, STREAM_FILE)
+
+def _stream_callback(content, tool_calls):
+    _write_stream({"content": content, "tool_calls": tool_calls, "done": False})
 MAX_REPEATED_TOOL_TURNS = 4
 # Approximate char budget for messages (rough: 1 token ≈ 4 chars).
 # With -c 8192 and max_tokens=512, we have ~7680 tokens for input ≈ 30720 chars.
@@ -117,7 +136,11 @@ def main():
                 break
 
         # Send to LLM
-        response = re_lay.send(messages)
+        # Signal stream start
+        _write_stream({"content": "", "tool_calls": [], "done": False}, force=True)
+        response = re_lay.send_stream(messages, on_chunk=_stream_callback)
+        # Signal stream complete
+        _write_stream({"done": True}, force=True)
 
         if response.get("error"):
             err = response["error"]

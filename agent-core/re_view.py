@@ -5,6 +5,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "messages.json")
+STREAM_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "stream.json")
 PORT = 5000
 
 HTML = """<!DOCTYPE html>
@@ -40,6 +41,10 @@ HTML = """<!DOCTYPE html>
   .obs-body.collapsed { max-height: 3.6em; -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
   .think-bubble { background: #1a2a1a; border-left: 3px solid #4caf50; border-radius: 4px; padding: 4px 10px; margin: 4px 0; font-size: 12px; color: #81c784; font-style: italic; }
   .think-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #4caf50; margin-bottom: 2px; }
+  .msg-streaming { background: #0d2137; border-left: 3px solid #2196f3; align-self: flex-start; animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { border-left-color: #2196f3; } 50% { border-left-color: #0d47a1; } }
+  .streaming-cursor { display: inline-block; width: 2px; height: 1em; background: #2196f3; animation: blink 0.8s step-end infinite; vertical-align: text-bottom; margin-left: 2px; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 </style>
 </head>
 <body>
@@ -155,6 +160,51 @@ async function poll() {
 
 poll();
 setInterval(poll, 2000);
+
+let streamDiv = null;
+let streamInterval = null;
+
+async function streamPoll() {
+  try {
+    const r = await fetch('/stream');
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.done) {
+      if (streamDiv) { streamDiv.remove(); streamDiv = null; }
+      poll(); // refresh full conversation immediately
+      return;
+    }
+    // Create or update streaming bubble
+    if (!streamDiv) {
+      streamDiv = document.createElement('div');
+      streamDiv.className = 'msg msg-streaming';
+      streamDiv.id = 'stream-bubble';
+      log.appendChild(streamDiv);
+    }
+    let html = '<div class="role-label role-label-assistant">assistant ⟳</div>';
+    if (data.content) {
+      html += '<div class="content-text">' + escape(data.content) + '<span class="streaming-cursor"></span></div>';
+    }
+    if (data.tool_calls && data.tool_calls.length) {
+      data.tool_calls.forEach(tc => {
+        const fn = tc.function || {};
+        if (fn.name) {
+          html += '<span class="tool-call">' + escape(fn.name) + '</span>';
+        }
+        if (fn.arguments) {
+          html += '<div class="tool-call-args">' + escape(fn.arguments) + '<span class="streaming-cursor"></span></div>';
+        }
+      });
+    }
+    if (!data.content && (!data.tool_calls || !data.tool_calls.length)) {
+      html += '<div class="content-text"><span class="streaming-cursor"></span></div>';
+    }
+    streamDiv.innerHTML = html;
+    window.scrollTo(0, document.body.scrollHeight);
+  } catch(e) {}
+}
+
+streamInterval = setInterval(streamPoll, 150);
 </script>
 </body>
 </html>"""
@@ -171,6 +221,17 @@ class Handler(BaseHTTPRequestHandler):
                     body = f.read().encode("utf-8")
             except FileNotFoundError:
                 body = b"[]"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/stream":
+            try:
+                with open(STREAM_FILE, "r", encoding="utf-8") as f:
+                    body = f.read().encode("utf-8")
+            except (FileNotFoundError, ValueError):
+                body = b'{"done": true}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

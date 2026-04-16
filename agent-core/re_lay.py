@@ -85,6 +85,107 @@ TOOLS = [
 ]
 
 
+def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
+    """Send messages to llama.cpp with streaming and return the parsed response dict."""
+    base_url = base_url or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+    max_tokens = max_tokens or int(os.getenv("LLM_MAX_TOKENS", str(DEFAULT_MAX_TOKENS)))
+    timeout = timeout or int(os.getenv("LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    model = os.getenv("LLM_MODEL", "local")
+
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+
+    clean_messages = copy.deepcopy(messages)
+    for msg in clean_messages:
+        for tc in msg.get("tool_calls") or []:
+            tc.pop("_thought", None)
+
+    clean_messages = [
+        m for m in clean_messages
+        if not (m.get("role") == "system" and not (m.get("content") or "").strip())
+    ]
+
+    payload = {
+        "model": model,
+        "messages": clean_messages,
+        "max_tokens": max_tokens,
+        "temperature": 1.05,
+        "stream": True,
+    }
+    if tools:
+        payload["tools"] = tools
+
+    body = json.dumps(payload).encode("utf-8")
+    
+    api_key = os.getenv("LLM_API_KEY", "")
+    headers = {"Content-Type": "application/json"}
+    if api_key and api_key.lower() != "dummy":
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            accumulated_content = ""
+            tool_calls_acc = {}
+            for line in resp:
+                line = line.decode("utf-8").strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data: "):
+                    data_str = line[len("data: "):]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk["choices"][0]["delta"]
+                        
+                        if "content" in delta and delta["content"]:
+                            accumulated_content += delta["content"]
+                        
+                        if "tool_calls" in delta:
+                            for tc_delta in delta["tool_calls"]:
+                                idx = tc_delta["index"]
+                                if idx not in tool_calls_acc:
+                                    tool_calls_acc[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                                if "id" in tc_delta:
+                                    tool_calls_acc[idx]["id"] = tc_delta["id"]
+                                if "type" in tc_delta:
+                                    tool_calls_acc[idx]["type"] = tc_delta["type"]
+                                if "function" in tc_delta:
+                                    fn = tc_delta["function"]
+                                    if "name" in fn:
+                                        tool_calls_acc[idx]["function"]["name"] += fn["name"]
+                                    if "arguments" in fn:
+                                        tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
+                        
+                        on_chunk(accumulated_content, list(tool_calls_acc.values()))
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        pass
+
+            final_tool_calls = list(tool_calls_acc.values())
+            return {
+                "content": accumulated_content or None,
+                "tool_calls": final_tool_calls if final_tool_calls else None,
+                "error": None
+            }
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            pass
+        logger.error("LLM HTTP %s: %s", e.code, error_body)
+        return {"content": None, "tool_calls": None, "error": f"HTTP {e.code}: {error_body}"}
+    except Exception as e:
+        logger.error("LLM request failed: %s", e)
+        return {"content": None, "tool_calls": None, "error": str(e)}
+
+
 def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
     """Send messages to llama.cpp and return the parsed response dict.
     

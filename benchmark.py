@@ -112,6 +112,24 @@ def collect_experiment_metadata():
                             metadata["independent_variables"]["max_tokens"] = int(val)
                         except ValueError:
                             pass
+                    elif line.startswith("LLM_CTX_SIZE="):
+                        val = line.strip().split("=", 1)[1]
+                        try:
+                            metadata["constants"]["context_window"] = int(val)
+                        except ValueError:
+                            pass
+                    elif line.startswith("LLM_MAX_GENERATION="):
+                        val = line.strip().split("=", 1)[1]
+                        try:
+                            metadata["constants"]["max_generation"] = int(val)
+                        except ValueError:
+                            pass
+                    elif line.startswith("LLM_GPU_LAYERS="):
+                        val = line.strip().split("=", 1)[1]
+                        try:
+                            metadata["constants"]["gpu_layers"] = int(val)
+                        except ValueError:
+                            pass
     except Exception:
         pass
 
@@ -151,22 +169,22 @@ def collect_experiment_metadata():
             with open("docker_run.sh", "r") as f:
                 content = f.read()
                 
-                c_match = re.search(r'-c\s+(\d+)', content)
-                if c_match:
+                c_match = re.search(r'LLM_CTX_SIZE=\$\(.*?"(\d+)"\)', content) or re.search(r'get_env\s+"LLM_CTX_SIZE"\s+"(\d+)"', content)
+                if c_match and metadata["constants"]["context_window"] is None:
                     try:
                         metadata["constants"]["context_window"] = int(c_match.group(1))
                     except ValueError:
                         pass
                         
-                n_match = re.search(r'-n\s+(\d+)', content)
-                if n_match:
+                n_match = re.search(r'LLM_MAX_GENERATION=\$\(.*?"(\d+)"\)', content) or re.search(r'get_env\s+"LLM_MAX_GENERATION"\s+"(\d+)"', content)
+                if n_match and metadata["constants"]["max_generation"] is None:
                     try:
                         metadata["constants"]["max_generation"] = int(n_match.group(1))
                     except ValueError:
                         pass
                         
-                gpu_match = re.search(r'--n-gpu-layers\s+(\d+)', content)
-                if gpu_match:
+                gpu_match = re.search(r'LLM_GPU_LAYERS=\$\(.*?"(\d+)"\)', content) or re.search(r'get_env\s+"LLM_GPU_LAYERS"\s+"(\d+)"', content)
+                if gpu_match and metadata["constants"]["gpu_layers"] is None:
                     try:
                         metadata["constants"]["gpu_layers"] = int(gpu_match.group(1))
                     except ValueError:

@@ -5,5 +5,7 @@ agent-core/state/messages.json
 agent-core/__pycache__/
 agent-core/tools/__pycache__/
 logs/
-eval_results_*.json
+eval_results/
 .snapshot/
+download_models.sh
+scripts/

@@ -10,6 +10,8 @@ from datetime import datetime
 
 STATE_FILE = "agent-core/state/messages.json"
 AGENT_DIR = "agent-core"
+RESULTS_DIR = "eval_results"
+DIFFS_DIR = os.path.join(RESULTS_DIR, "diffs")
 
 
 def check_llm_health():
@@ -92,6 +94,10 @@ def run_analyzer():
 def main(num_runs):
     results = []
 
+    # Ensure results directories exist
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(DIFFS_DIR, exist_ok=True)
+
     if not check_llm_health():
         print("ERROR: LLM server is not reachable at http://127.0.0.1:8080/health")
         print("Start it first, e.g.: python -m restart --config restart/config.json")
@@ -161,7 +167,7 @@ def main(num_runs):
 
         if diff_content:
             # Save the full diff to a separate file for detailed analysis
-            diff_file = f"eval_diff_run{i+1}_{int(time.time())}.patch"
+            diff_file = os.path.join(DIFFS_DIR, f"eval_diff_run{i+1}_{int(time.time())}.patch")
             with open(diff_file, "w") as f:
                 f.write(diff_content)
             stats["diff_file"] = diff_file
@@ -177,7 +183,7 @@ def main(num_runs):
         results.append(stats)
 
     # Dump the experiment log
-    out_file = f"eval_results_{int(time.time())}.json"
+    out_file = os.path.join(RESULTS_DIR, f"results_{int(time.time())}.json")
     with open(out_file, "w") as f:
         json.dump(results, f, indent=4)
 

@@ -3,7 +3,7 @@ __pycache__/
 agent-core/.venv/
 agent-core/state/messages.json
 agent-core/__pycache__/
-agent-core/tools/__pycache__/
+agent-core/tools/c/
 logs/
 eval_results/
 .snapshot/
@@ -11,3 +11,10 @@ download_models.sh
 scripts/
 docker_run.sh
 run_experiments.sh
+agent-core/.env
+.env
+.venv
+*.venv
+*venv*
+.venv/
+venv/

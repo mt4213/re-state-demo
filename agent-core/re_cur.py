@@ -166,9 +166,10 @@ def main():
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
 
+        messages.append(assistant_msg)
+
         if tool_calls:
             no_tool_count = 0
-            messages.append(assistant_msg)
             
             current_signature_list = []
 
@@ -214,6 +215,12 @@ def main():
             logger.info("No tool calls on turn %d (%d/%d). Content: %s",
                         iteration, no_tool_count, MAX_NO_TOOL_TURNS,
                         (content or "")[:200])
+
+            messages.append({
+                "role": "user",
+                "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]"
+            })
+
             if no_tool_count >= MAX_NO_TOOL_TURNS:
                 logger.info("Circuit breaker: %d consecutive no-tool turns. Halting.", no_tool_count)
                 sys.exit(1)

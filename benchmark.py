@@ -72,6 +72,8 @@ def git_diff_stat():
         if line.strip():
             parts = line.split("\t", 1)
             if len(parts) == 2:
+                if parts[1].startswith(AGENT_DIR + "/state/"):
+                    continue
                 changes.append({"status": parts[0], "file": parts[1]})
     return changes
 

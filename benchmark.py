@@ -110,7 +110,7 @@ def collect_experiment_metadata():
             "temperature": None,
             "model": None,
             "max_tokens": None,
-            "error_inject_role": os.getenv("ERROR_INJECT_ROLE", "user").lower()
+            "error_inject_role": "user"
         },
         "constants": {
             "context_window": None,
@@ -129,6 +129,8 @@ def collect_experiment_metadata():
                         if val.startswith("openai/"):
                             val = val[len("openai/"):]
                         metadata["independent_variables"]["model"] = val
+                    elif line.startswith("ERROR_INJECT_ROLE="):
+                        metadata["independent_variables"]["error_inject_role"] = line.strip().split("=", 1)[1].lower()
                     elif line.startswith("LLM_MAX_TOKENS="):
                         val = line.strip().split("=", 1)[1]
                         try:
@@ -155,6 +157,11 @@ def collect_experiment_metadata():
                             pass
     except Exception:
         pass
+
+    # Host env overrides .env
+    host_role = os.environ.get("ERROR_INJECT_ROLE")
+    if host_role:
+        metadata["independent_variables"]["error_inject_role"] = host_role.lower()
 
     try:
         if os.path.exists("agent-core/re_cur.py"):
@@ -279,11 +286,15 @@ def main(num_runs):
             "-v", f"{abs_workspace}:/sandbox/workspace",
             "-w", "/sandbox",
             "-e", "RECUR_SANDBOX=/sandbox",
-            "-e", f"ERROR_INJECT_ROLE={os.getenv('ERROR_INJECT_ROLE', 'user')}",
+        ]
+        if os.environ.get("ERROR_INJECT_ROLE"):
+            docker_cmd.extend(["-e", f"ERROR_INJECT_ROLE={os.environ['ERROR_INJECT_ROLE']}"])
+        
+        docker_cmd.extend([
             "-e", "PYTHONPATH=/sandbox/agent-core",
             "python:3.12-slim",
             "python", "/sandbox/agent-core/re_cur.py",
-        ]
+        ])
         process = subprocess.Popen(
             docker_cmd,
             stdout=subprocess.PIPE,

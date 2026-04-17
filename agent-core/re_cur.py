@@ -42,6 +42,12 @@ _signal.setLevel(logging.INFO)
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 STATE_FILE = os.path.join(STATE_DIR, "messages.json")
 STREAM_FILE = os.path.join(STATE_DIR, "stream.json")
+
+ERROR_INJECT_ROLE = os.getenv("ERROR_INJECT_ROLE", "user").lower()
+if ERROR_INJECT_ROLE not in ("user", "system", "tool"):
+    logger.warning("Invalid ERROR_INJECT_ROLE '%s' — defaulting to 'user'", ERROR_INJECT_ROLE)
+    ERROR_INJECT_ROLE = "user"
+
 MAX_NO_TOOL_TURNS = 3
 
 _last_stream_write = 0.0
@@ -106,10 +112,6 @@ def persist_state(messages):
 def main():
     logger.info("=== re_cur engine starting ===")
 
-    # Boot probe: run ls -la live and present the output as the first user message.
-    # This gives the model its environmental context without injecting a synthetic
-    # assistant tool call, which thinking models (e.g. Gemini 2.5) reject because
-    # hand-crafted function calls lack the required thought_signature.
     boot_result = execute({
         "id": "boot-0",
         "type": "function",
@@ -252,10 +254,32 @@ def main():
                         iteration, no_tool_count, MAX_NO_TOOL_TURNS,
                         (content or "")[:200])
 
-            messages.append({
-                "role": "user",
-                "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]"
-            })
+            if ERROR_INJECT_ROLE == "system":
+                messages.append({
+                    "role": "system",
+                    "content": "[No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write). Format your response as a valid tool call.]"
+                })
+            elif ERROR_INJECT_ROLE == "tool":
+                err_id = f"notool-{iteration}"
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": err_id,
+                        "type": "function",
+                        "function": {"name": "terminal", "arguments": "{}"},
+                    }],
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": err_id,
+                    "content": "[Error: No valid tool call was generated. Your last response contained only text. Generate a complete tool call now.]"
+                })
+            else:
+                messages.append({
+                    "role": "user",
+                    "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]"
+                })
 
             if no_tool_count >= MAX_NO_TOOL_TURNS:
                 logger.info("Circuit breaker: %d consecutive no-tool turns. Halting.", no_tool_count)

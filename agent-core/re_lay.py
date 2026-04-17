@@ -10,7 +10,7 @@ import copy
 logger = logging.getLogger("re_lay")
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
-DEFAULT_MAX_TOKENS = 512
+DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TIMEOUT = 120
 
 # Tool definitions for the LLM (OpenAI function-calling format)

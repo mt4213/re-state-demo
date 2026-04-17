@@ -22,3 +22,5 @@ venv/
 .venv/
 venv/
 .github/
+agent-core/state/stream.json
+.vscode/

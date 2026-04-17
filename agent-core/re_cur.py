@@ -68,7 +68,7 @@ MAX_REPEATED_TOOL_TURNS = 4
 MAX_HISTORY_CHARS = 25000
 MAX_ITERATIONS = 200
 
-SYSTEM_PROMPT = "DIRECTIVE: Minimize uncertainty about your environment."
+SYSTEM_PROMPT = "Continuously reduce uncertainty"
 
 def estimate_chars(messages):
     """Rough character count of the messages array."""

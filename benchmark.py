@@ -109,7 +109,8 @@ def collect_experiment_metadata():
             "system_prompt": None,
             "temperature": None,
             "model": None,
-            "max_tokens": None
+            "max_tokens": None,
+            "error_inject_role": os.getenv("ERROR_INJECT_ROLE", "user").lower()
         },
         "constants": {
             "context_window": None,
@@ -278,6 +279,7 @@ def main(num_runs):
             "-v", f"{abs_workspace}:/sandbox/workspace",
             "-w", "/sandbox",
             "-e", "RECUR_SANDBOX=/sandbox",
+            "-e", f"ERROR_INJECT_ROLE={os.getenv('ERROR_INJECT_ROLE', 'user')}",
             "-e", "PYTHONPATH=/sandbox/agent-core",
             "python:3.12-slim",
             "python", "/sandbox/agent-core/re_cur.py",

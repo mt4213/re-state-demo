@@ -49,6 +49,7 @@ if ERROR_INJECT_ROLE not in ("user", "system", "tool"):
     ERROR_INJECT_ROLE = "user"
 
 MAX_NO_TOOL_TURNS = 3
+MAX_LLM_ERROR_TURNS = 5
 
 _last_stream_write = 0.0
 
@@ -124,6 +125,7 @@ def main():
     persist_state(messages)
 
     no_tool_count = 0
+    llm_error_count = 0
     repeated_tool_count = 0
     last_tool_signature = None
     iteration = 0
@@ -170,13 +172,17 @@ def main():
                 persist_state(messages)
                 _write_stream({"done": True}, force=True)
                 continue
-            no_tool_count += 1
-            if no_tool_count >= MAX_NO_TOOL_TURNS:
-                logger.error("Circuit breaker: %d consecutive failures. Halting.", no_tool_count)
+            llm_error_count += 1
+            if llm_error_count >= MAX_LLM_ERROR_TURNS:
+                logger.error("Circuit breaker: %d consecutive API failures. Halting.", llm_error_count)
                 _write_stream({"done": True}, force=True)
                 sys.exit(1)
             _write_stream({"done": True}, force=True)
+            time.sleep(2 * llm_error_count)
             continue
+
+        # Reset API error counter on success
+        llm_error_count = 0
 
         # Build assistant message
         assistant_msg: dict[str, typing.Any] = {"role": "assistant"}

@@ -94,10 +94,13 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
 
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
 
-    clean_messages = copy.deepcopy(messages)
-    for msg in clean_messages:
-        for tc in msg.get("tool_calls") or []:
+    allowed_keys = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    clean_messages = []
+    for msg in copy.deepcopy(messages):
+        clean_msg = {k: v for k, v in msg.items() if k in allowed_keys}
+        for tc in clean_msg.get("tool_calls") or []:
             tc.pop("_thought", None)
+        clean_messages.append(clean_msg)
 
     clean_messages = [
         m for m in clean_messages
@@ -207,10 +210,13 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
 
     # Strip _thought annotations before sending to LLM
-    clean_messages = copy.deepcopy(messages)
-    for msg in clean_messages:
-        for tc in msg.get("tool_calls") or []:
+    allowed_keys = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    clean_messages = []
+    for msg in copy.deepcopy(messages):
+        clean_msg = {k: v for k, v in msg.items() if k in allowed_keys}
+        for tc in clean_msg.get("tool_calls") or []:
             tc.pop("_thought", None)
+        clean_messages.append(clean_msg)
 
     # Gemini (and some other providers) reject requests where `contents` is empty.
     # The system role maps to systemInstruction, not contents — so a system-only

@@ -62,6 +62,7 @@ if ERROR_INJECT_ROLE not in ("user", "system", "tool"):
 
 MAX_NO_TOOL_TURNS = 3
 MAX_LLM_ERROR_TURNS = 5
+MAX_PARSE_ERROR_TURNS = 5  # Max consecutive JSON parse/truncation errors
 
 _last_stream_write = 0.0
 
@@ -139,6 +140,7 @@ def main():
 
     no_tool_count = 0
     llm_error_count = 0
+    parse_error_count = 0  # Track consecutive JSON parse/truncation errors
     repeated_tool_count = 0
     last_tool_signature = None
     iteration = 0
@@ -163,6 +165,8 @@ def main():
             # JSON parse / truncation error — synthesize the failed turn in context
             # so the model sees a concrete error instead of regenerating blindly.
             if "parse_error" in err or "parse tool call" in err.lower() or "missing closing quote" in err.lower():
+                parse_error_count += 1
+                logger.warning("Parse error on turn %d (%d/%d): %s", iteration, parse_error_count, MAX_PARSE_ERROR_TURNS, err)
                 err_id = f"err-{iteration}"
                 messages.append({
                     "role": "assistant",
@@ -185,6 +189,10 @@ def main():
                 })
                 persist_state(messages)
                 _write_stream({"done": True}, force=True)
+                if parse_error_count >= MAX_PARSE_ERROR_TURNS:
+                    logger.error("Circuit breaker: %d consecutive parse errors. Halting.", parse_error_count)
+                    _write_stream({"done": True}, force=True)
+                    sys.exit(1)
                 continue
             llm_error_count += 1
             if llm_error_count >= MAX_LLM_ERROR_TURNS:
@@ -197,6 +205,7 @@ def main():
 
         # Reset API error counter on success
         llm_error_count = 0
+        parse_error_count = 0  # Reset on successful LLM response
 
         # Build assistant message
         assistant_msg: dict[str, typing.Any] = {"role": "assistant"}

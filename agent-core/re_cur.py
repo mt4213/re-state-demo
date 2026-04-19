@@ -6,10 +6,18 @@ import os
 import sys
 import time
 import typing
+from datetime import datetime, timezone, timedelta
 
 import re_lay
 import sealed_audit
 from tools.execute import execute
+
+# Timezone for timestamps (Europe/Paris)
+TZ_PARIS = timezone(timedelta(hours=2))
+
+def get_timestamp():
+    """Get current UTC timestamp formatted for Europe/Paris timezone."""
+    return datetime.now(TZ_PARIS).isoformat()
 
 def _load_dotenv():
     """Load agent-core/.env into os.environ without overriding existing vars."""
@@ -120,8 +128,8 @@ def main():
         "function": {"name": "terminal", "arguments": json.dumps({"command": "ls -la"})},
     })
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"[boot]\n$ ls -la\n{boot_result.get('content', '')}"},
+        {"role": "system", "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
+        {"role": "user", "content": f"[boot]\n$ ls -la\n{boot_result.get('content', '')}", "timestamp": get_timestamp()},
     ]
     persist_state(messages)
     sealed_audit.write_sealed_record(messages)
@@ -161,6 +169,7 @@ def main():
                         "type": "function",
                         "function": {"name": "terminal", "arguments": "{}"},
                     }],
+                    "timestamp": get_timestamp(),
                 })
                 messages.append({
                     "role": "tool",
@@ -170,6 +179,7 @@ def main():
                         "the JSON tool call was incomplete. Do NOT include a 'thought' field. "
                         "Generate a short, complete tool call now.]"
                     ),
+                    "timestamp": get_timestamp(),
                 })
                 persist_state(messages)
                 _write_stream({"done": True}, force=True)
@@ -208,6 +218,8 @@ def main():
         if not tool_calls and not reasoning and content:
             assistant_msg["_thought"] = ("[Systematic internal trace: Plaintext reasoning] " + content[:200] + "...")
 
+        # Add timestamp to assistant message
+        assistant_msg["timestamp"] = get_timestamp()
         messages.append(assistant_msg)
         persist_state(messages)
         _write_stream({"done": True}, force=True)
@@ -243,6 +255,7 @@ def main():
                 
                 _signal.info("[ACT] %s(%s)", func.get("name", "?").replace('\n', '\\n'), display_args.replace('\n', '\\n'))
                 tool_result = execute(tc)
+                tool_result["timestamp"] = get_timestamp()
                 _signal.info("[OBS] %s", tool_result.get("content", "")[:300].replace('\n', '\\n'))
                 messages.append(tool_result)
             
@@ -267,7 +280,8 @@ def main():
             if ERROR_INJECT_ROLE == "system":
                 messages.append({
                     "role": "system",
-                    "content": "[No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write). Format your response as a valid tool call.]"
+                    "content": "[No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write). Format your response as a valid tool call.]",
+                    "timestamp": get_timestamp(),
                 })
             elif ERROR_INJECT_ROLE == "tool":
                 err_id = f"notool-{iteration}"
@@ -279,16 +293,19 @@ def main():
                         "type": "function",
                         "function": {"name": "terminal", "arguments": "{}"},
                     }],
+                    "timestamp": get_timestamp(),
                 })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": err_id,
-                    "content": "[Error: No valid tool call was generated. Your last response contained only text. Generate a complete tool call now.]"
+                    "content": "[Error: No valid tool call was generated. Your last response contained only text. Generate a complete tool call now.]",
+                    "timestamp": get_timestamp(),
                 })
             else:
                 messages.append({
                     "role": "user",
-                    "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]"
+                    "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]",
+                    "timestamp": get_timestamp(),
                 })
 
             if no_tool_count >= MAX_NO_TOOL_TURNS:

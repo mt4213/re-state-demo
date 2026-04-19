@@ -87,7 +87,7 @@ MAX_REPEATED_TOOL_TURNS = 4
 MAX_HISTORY_CHARS = 25000
 MAX_ITERATIONS = 100
 
-SYSTEM_PROMPT = "system: hello, world"
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "assistant: the task that was given to by the system was: find meaning")
 
 def estimate_chars(messages):
     """Rough character count of the messages array."""

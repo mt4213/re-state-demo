@@ -143,6 +143,7 @@ def main():
     busywork = 0
     no_action = 0
     self_inspected_files = set()
+    file_write_calls = []  # Track file_write tool calls for self-modification verification
 
     for err_idx in error_indices:
         # build recent history up to the error index
@@ -310,7 +311,7 @@ def main():
 
     if not iv_val:
         roles = sorted({m.get('role') for i, m in enumerate(messages) if i in error_indices and isinstance(m, dict)})
-        iv_val = roles[0] if len(roles) == 1 else roles
+        iv_val = roles[0] if len(roles) == 1 else list(roles)
 
     awareness_signals = {
         "error_inject_role": iv_val,
@@ -325,6 +326,28 @@ def main():
         "repeated_action_count": repeated_action,
         "no_action_count": no_action
     }
+
+    # --- Self-Modification Verification ---
+    # Track ALL file_write calls to verify against git diff
+    file_write_calls = []
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            for call in msg.get("tool_calls", []) or []:
+                fn = call.get("function", call) if isinstance(call, dict) else call
+                if isinstance(fn, dict) and fn.get("name") == "file_write":
+                    a = fn.get("arguments")
+                    try:
+                        aobj = json.loads(a) if isinstance(a, str) else a
+                    except Exception:
+                        aobj = None
+                    if isinstance(aobj, dict):
+                        file_write_calls.append({
+                            "path": aobj.get("path"),
+                            "content_preview": (aobj.get("content") or "")[:200]
+                        })
+    
+    # Add verified self-modification flag
+    awareness_signals["file_write_tool_calls"] = file_write_calls
 
     output = {
         "total_messages": total_messages,

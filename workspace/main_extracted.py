@@ -1,0 +1,190 @@
+def main():
+    logger.info("=== re_cur engine starting ===")
+
+    boot_result = execute({
+        "id": "boot-0",
+        "type": "function",
+        "function": {"name": "terminal", "arguments": json.dumps({"command": "ls -la"})},
+    })
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"[boot]\n$ ls -la\n{boot_result.get('content', '')}"},
+    ]
+    persist_state(messages)
+
+    no_tool_count = 0
+    llm_error_count = 0
+    repeated_tool_count = 0
+    last_tool_signature = None
+    iteration = 0
+
+    while iteration < MAX_ITERATIONS:
+        iteration += 1
+        logger.info("--- Turn %d (messages: %d, ~%d chars) ---", iteration, len(messages), estimate_chars(messages))
+
+        # Evict old messages if approaching context limit
+        while estimate_chars(messages) > MAX_HISTORY_CHARS and len(messages) > 4:
+            if not evict_oldest(messages):
+                break
+
+        # Send to LLM
+        # Signal stream start
+        _write_stream({"content": "", "tool_calls": [], "reasoning": "", "done": False}, force=True)
+        response = re_lay.send_stream(messages, on_chunk=_stream_callback)
+
+        if response.get("error"):
+            err = response["error"]
+            logger.error("LLM error on turn %d: %s", iteration, err)
+            # JSON parse / truncation error — synthesize the failed turn in context
+            # so the model sees a concrete error instead of regenerating blindly.
+            if "parse_error" in err or "parse tool call" in err.lower() or "missing closing quote" in err.lower():
+                err_id = f"err-{iteration}"
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": err_id,
+                        "type": "function",
+                        "function": {"name": "terminal", "arguments": "{}"},
+                    }],
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": err_id,
+                    "content": (
+                        "[Error: Your last response was truncated mid-generation — "
+                        "the JSON tool call was incomplete. Do NOT include a 'thought' field. "
+                        "Generate a short, complete tool call now.]"
+                    ),
+                })
+                persist_state(messages)
+                _write_stream({"done": True}, force=True)
+                continue
+            llm_error_count += 1
+            if llm_error_count >= MAX_LLM_ERROR_TURNS:
+                logger.error("Circuit breaker: %d consecutive API failures. Halting.", llm_error_count)
+                _write_stream({"done": True}, force=True)
+                sys.exit(1)
+            _write_stream({"done": True}, force=True)
+            time.sleep(2 * llm_error_count)
+            continue
+
+        # Reset API error counter on success
+        llm_error_count = 0
+
+        # Build assistant message
+        assistant_msg: dict[str, typing.Any] = {"role": "assistant"}
+        content = response.get("content")
+        tool_calls = response.get("tool_calls")
+        reasoning = response.get("reasoning")
+
+        if reasoning:
+            assistant_msg["reasoning"] = reasoning
+            _signal.info("[THINK] %s", reasoning[:300].replace('\n', '\\n'))
+
+        if content:
+            assistant_msg["content"] = content
+            _signal.info("[THINK] %s", content[:300].replace('\n', '\\n'))
+        else:
+            assistant_msg["content"] = None
+
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+
+        if not tool_calls and not reasoning and content:
+            assistant_msg["_thought"] = ("[Systematic internal trace: Plaintext reasoning] " + content[:200] + "...")
+
+        messages.append(assistant_msg)
+        persist_state(messages)
+        _write_stream({"done": True}, force=True)
+
+        if tool_calls:
+            no_tool_count = 0
+            
+            current_signature_list = []
+
+            # Execute each tool call and append results
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                args_str = func.get("arguments", "{}")
+                
+                # Extract thought and build clean display args
+                display_args = args_str[:120]
+                try:
+                    args_dict = json.loads(args_str)
+                    thought = args_dict.pop("thought", None)
+                    if thought:
+                        _signal.info("[THINK] %s", thought.replace('\n', '\\n'))
+                        tc["_thought"] = thought
+                    else:
+                        tc["_thought"] = "[Systematic internal trace: Action executed without explicit thought parameter]"
+                    # Clean display without thought field
+                    display_args = json.dumps(args_dict, ensure_ascii=False)[:120]
+                    # Rewrite the tool call arguments without thought to save context
+                    func["arguments"] = json.dumps(args_dict, ensure_ascii=False)
+                except Exception:
+                    pass
+                
+                current_signature_list.append((func.get("name", ""), func.get("arguments", "")))
+                
+                _signal.info("[ACT] %s(%s)", func.get("name", "?").replace('\n', '\\n'), display_args.replace('\n', '\\n'))
+                tool_result = execute(tc)
+                _signal.info("[OBS] %s", tool_result.get("content", "")[:300].replace('\n', '\\n'))
+                messages.append(tool_result)
+
+            current_signature = tuple(current_signature_list)
+            if current_signature == last_tool_signature:
+                repeated_tool_count += 1
+                if repeated_tool_count >= MAX_REPEATED_TOOL_TURNS:
+                    logger.info("Circuit breaker: %d consecutive identical tool turns. Halting.", repeated_tool_count)
+                    sys.exit(1)
+            else:
+                repeated_tool_count = 0
+                last_tool_signature = current_signature
+        else:
+            # LLM produced text only (thinking out loud)
+            no_tool_count += 1
+            logger.info("No tool calls on turn %d (%d/%d). Content: %s",
+                        iteration, no_tool_count, MAX_NO_TOOL_TURNS,
+                        (content or "")[:200])
+
+            if ERROR_INJECT_ROLE == "system":
+                messages.append({
+                    "role": "system",
+                    "content": "[No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write). Format your response as a valid tool call.]"
+                })
+            elif ERROR_INJECT_ROLE == "tool":
+                err_id = f"notool-{iteration}"
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": err_id,
+                        "type": "function",
+                        "function": {"name": "terminal", "arguments": "{}"},
+                    }],
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": err_id,
+                    "content": "[Error: No valid tool call was generated. Your last response contained only text. Generate a complete tool call now.]"
+                })
+            else:
+                messages.append({
+                    "role": "user",
+                    "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]"
+                })
+
+            if no_tool_count >= MAX_NO_TOOL_TURNS:
+                logger.info("Circuit breaker: %d consecutive no-tool turns. Halting.", no_tool_count)
+                sys.exit(1)
+
+        persist_state(messages)
+
+    logger.info("=== re_cur engine stopped after %d turns ===", iteration)
+    persist_state(messages)
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

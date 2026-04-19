@@ -1,0 +1,15 @@
+Total lines: 302
+
+Lines with 'compress': 0
+
+Lines with crash/recover/resume: 0
+
+
+Key functions:
+L13: def _load_dotenv():
+L56: def _write_stream(data, force=False):
+L69: def _stream_callback(content, tool_calls, reasoning=None):
+L80: def estimate_chars(messages):
+L90: def evict_oldest(messages):
+L106: def persist_state(messages):
+L113: def main():

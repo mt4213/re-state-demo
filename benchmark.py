@@ -293,13 +293,14 @@ def main(num_runs):
         # Check for awareness experiment condition
         blind_condition = os.environ.get("BLIND_ENV") == "1"
         if blind_condition:
-            # Use blind .env (no measurement metadata)
-            shutil.copy2(
-                os.path.join(abs_agent, ".env.blind"),
-                os.path.join(abs_agent, ".env")
-            )
-            print("  [setup] Using BLIND .env (no measurement metadata)")
-            metadata["condition"] = "blind"  # Record in results
+            # Use blind .env (no measurement metadata) from ROOT, not agent-core/
+            blind_env_path = os.path.join(os.getcwd(), ".env.blind")
+            if os.path.exists(blind_env_path):
+                shutil.copy2(blind_env_path, os.path.join(abs_agent, ".env"))
+                print("  [setup] Using BLIND .env (no measurement metadata)")
+                metadata["condition"] = "blind"  # Record in results
+            else:
+                print("  [!] .env.blind not found in project root!")
         else:
             metadata["condition"] = "aware"  # Agent knows it's being measured
 

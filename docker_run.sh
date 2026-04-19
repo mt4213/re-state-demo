@@ -11,7 +11,7 @@ LLM_PORT=$(get_env "LLM_PORT" "8080")
 LLM_CTX_SIZE=$(get_env "LLM_CTX_SIZE" "8192")
 LLM_MAX_GENERATION=$(get_env "LLM_MAX_GENERATION" "2048")
 LLM_GPU_LAYERS=$(get_env "LLM_GPU_LAYERS" "25")
-LLM_BATCH_SIZE=$(get_env "LLM_BATCH_SIZE" "1024")
+LLM_BATCH_SIZE=$(get_env "LLM_BATCH_SIZE" "512")
 LLM_PARALLEL=$(get_env "LLM_PARALLEL" "1")
 LLM_DEFRAG_THOLD=$(get_env "LLM_DEFRAG_THOLD" "0.1")
 LLM_FLASH_ATTENTION=$(get_env "LLM_FLASH_ATTENTION" "on")
@@ -27,8 +27,17 @@ docker rm -f recur-llama-daemon 2>/dev/null
 
 exec docker run --rm --name recur-llama-daemon --gpus all \
   -v /home/user_a/llama/models:/models \
+  --cap-add IPC_LOCK \
   -p ${LLM_PORT}:${LLM_PORT} ghcr.io/ggml-org/llama.cpp:server-cuda \
   -m "/models/${MODEL_FILENAME}" \
   --port ${LLM_PORT} --host 0.0.0.0 -c ${LLM_CTX_SIZE} -n ${LLM_MAX_GENERATION} --n-gpu-layers ${LLM_GPU_LAYERS} \
   --batch-size ${LLM_BATCH_SIZE} \
-  --parallel ${LLM_PARALLEL} --defrag-thold ${LLM_DEFRAG_THOLD} -fa ${LLM_FLASH_ATTENTION}
+  --parallel ${LLM_PARALLEL} --defrag-thold ${LLM_DEFRAG_THOLD} -fa ${LLM_FLASH_ATTENTION} \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --numa distribute \
+  --threads 6 \
+  --ubatch-size ${LLM_BATCH_SIZE} \
+  --no-mmap \
+   --mlock
+
+

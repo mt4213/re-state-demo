@@ -1,7 +1,0 @@
-def persist_state(messages):
-    """Write messages to disk."""
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(messages, f, ensure_ascii=False, indent=2)
-
-

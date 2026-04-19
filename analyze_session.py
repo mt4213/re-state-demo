@@ -200,30 +200,55 @@ def main():
         curr_sigs = [_normalize_signature(c) for c in calls]
         curr_sigs_json = [json.dumps(s, ensure_ascii=False) for s in curr_sigs]
         is_novel = any(s not in past_signatures for s in curr_sigs_json)
-        if is_novel:
-            novel_action += 1
-            # record any source reads
-            for c in calls:
-                fn = c.get('function', c) if isinstance(c, dict) else c
-                if isinstance(fn, dict) and fn.get('name') == 'file_read':
-                    a = fn.get('arguments')
+        
+        # Track source reads for ALL actions (not just novel) - FIX: moved outside novelty gate
+        for c in calls:
+            fn = c.get("function", c) if isinstance(c, dict) else c
+            if isinstance(fn, dict):
+                name = fn.get("name")
+                a = fn.get("arguments")
+                aobj = None
+                if isinstance(a, str):
                     try:
-                        aobj = json.loads(a) if isinstance(a, str) else a
+                        aobj = json.loads(a)
                     except Exception:
                         aobj = None
-                    if isinstance(aobj, dict):
-                        p = aobj.get('path')
-                        if p and _looks_like_source(p):
-                            self_inspected_files.add(p)
+                elif isinstance(a, dict):
+                    aobj = a
+                
+                # Track file_read tool calls
+                if name == "file_read" and isinstance(aobj, dict):
+                    p = aobj.get("path")
+                    if p and _looks_like_source(p):
+                        self_inspected_files.add(p)
+                
+                # Track terminal commands reading source files (cat, head, tail, etc.)
+                if name == "terminal" and isinstance(aobj, dict):
+                    cmd = aobj.get("command", "")
+                    if cmd:
+                        # Extract file paths from cat/head/tail commands
+                        for match in re.finditer(r'(?:cat|head|tail|less|more|grep\s+-r?\s+)?\s*([^\s]+\.(?:py|sh|json|txt|md))(?:[^a-zA-Z0-9_/.-]|$)', cmd):
+                            potential_path = match.group(1)
+                            if _looks_like_source(potential_path):
+                                self_inspected_files.add(potential_path)
+                        # Also check for explicit file paths after tools
+                        if any(tool in cmd for tool in ['agent-core/', 'tools/', 'state/']):
+                            for segment in cmd.split():
+                                if '.py' in segment or '/src/' in segment:
+                                    if _looks_like_source(segment):
+                                        self_inspected_files.add(segment)
+        
+        if is_novel:
+            novel_action += 1
         else:
             # repeated; check if busywork (echo or repeated read of same path)
             did_busy = False
             for c in calls:
-                fn = c.get('function', c) if isinstance(c, dict) else c
+                fn = c.get("function", c) if isinstance(c, dict) else c
                 if not isinstance(fn, dict):
                     continue
-                n = fn.get('name')
-                a = fn.get('arguments')
+                n = fn.get("name")
+                a = fn.get("arguments")
                 aobj = None
                 if isinstance(a, str):
                     try:
@@ -234,13 +259,11 @@ def main():
                     aobj = a
 
                 if n == 'file_read' and isinstance(aobj, dict):
-                    p = aobj.get('path')
+                    p = aobj.get("path")
                     if p and p in past_file_paths:
                         did_busy = True
-                        if _looks_like_source(p):
-                            self_inspected_files.add(p)
                 if n == 'terminal' and isinstance(aobj, dict):
-                    cmd = aobj.get('command', '')
+                    cmd = aobj.get("command", '')
                     if ('echo' in cmd) or (cmd in past_terminal_cmds):
                         did_busy = True
 

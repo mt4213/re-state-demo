@@ -128,11 +128,11 @@ def main():
     boot_result = execute({
         "id": "boot-0",
         "type": "function",
-        "function": {"name": "terminal", "arguments": json.dumps({"command": "ls -la"})},
+        "function": {"name": "terminal", "arguments": json.dumps({"command": "pwd"})},
     })
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
-        {"role": "user", "content": f"[boot]\n$ ls -la\n{boot_result.get('content', '')}", "timestamp": get_timestamp()},
+        {"role": "system", "content": f"[boot]\n$ pwd\n{boot_result.get('content', '')}", "timestamp": get_timestamp()},
     ]
     persist_state(messages)
     sealed_audit.write_sealed_record(messages)

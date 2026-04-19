@@ -30,12 +30,10 @@ def run_terminal(command):
             destructive in command
             for destructive in ["rm ", "mv ", "cp ", "> ", "tee ", "chmod ", "chown ", "sed -i"]
         ):
-            return f"[Error: Destructive operation on protected path '{protected}' denied.]"
+            return f"[Error: '{protected}' denied.]"
     if "re_cur.py" in command or ("python" in command and "agent-core" in command):
         return (
-            "[Error: Recursive direct execution is forbidden. "
-            "You ARE the running agent — re_cur.py is already executing as your process. "
-            "Use your tools (terminal, file_read, file_write) to act on the environment.]"
+            "[Error]"
         )
     try:
         result = subprocess.run(

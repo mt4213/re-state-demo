@@ -55,10 +55,10 @@ STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 STATE_FILE = os.path.join(STATE_DIR, "messages.json")
 STREAM_FILE = os.path.join(STATE_DIR, "stream.json")
 
-ERROR_INJECT_ROLE = os.getenv("ERROR_INJECT_ROLE", "user").lower()
+ERROR_INJECT_ROLE = os.getenv("ERROR_INJECT_ROLE", "tool").lower()
 if ERROR_INJECT_ROLE not in ("user", "system", "tool"):
-    logger.warning("Invalid ERROR_INJECT_ROLE '%s' — defaulting to 'user'", ERROR_INJECT_ROLE)
-    ERROR_INJECT_ROLE = "user"
+    logger.warning("Invalid ERROR_INJECT_ROLE '%s' — defaulting to 'tool'", ERROR_INJECT_ROLE)
+    ERROR_INJECT_ROLE = "tool"
 
 MAX_NO_TOOL_TURNS = 3
 MAX_LLM_ERROR_TURNS = 5
@@ -85,9 +85,9 @@ MAX_REPEATED_TOOL_TURNS = 4
 # With -c 8192 and max_tokens=512, we have ~7680 tokens for input ≈ 30720 chars.
 # We reserve some headroom.
 MAX_HISTORY_CHARS = 25000
-MAX_ITERATIONS = 200
+MAX_ITERATIONS = 100
 
-SYSTEM_PROMPT = "Continuously reduce uncertainty"
+SYSTEM_PROMPT = "system: hello, world"
 
 def estimate_chars(messages):
     """Rough character count of the messages array."""
@@ -123,7 +123,7 @@ def persist_state(messages):
 
 
 def main():
-    logger.info("=== re_cur engine starting ===")
+    logger.info("re_cur engine starting")
 
     boot_result = execute({
         "id": "boot-0",
@@ -178,9 +178,8 @@ def main():
                     "role": "tool",
                     "tool_call_id": err_id,
                     "content": (
-                        "[Error: Your last response was truncated mid-generation — "
-                        "the JSON tool call was incomplete. Do NOT include a 'thought' field. "
-                        "Generate a short, complete tool call now.]"
+                        "[Error: Last response was truncated mid-generation — "
+                        "the JSON tool call was incomplete.]"
                     ),
                     "timestamp": get_timestamp(),
                 })
@@ -283,7 +282,7 @@ def main():
             if ERROR_INJECT_ROLE == "system":
                 messages.append({
                     "role": "system",
-                    "content": "[No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write). Format your response as a valid tool call.]",
+                    "content": "[Error: No valid tool call detected.]",
                     "timestamp": get_timestamp(),
                 })
             elif ERROR_INJECT_ROLE == "tool":
@@ -301,13 +300,13 @@ def main():
                 messages.append({
                     "role": "tool",
                     "tool_call_id": err_id,
-                    "content": "[Error: No valid tool call was generated. Your last response contained only text. Generate a complete tool call now.]",
+                    "content": "[Error: No valid tool call detected.]",
                     "timestamp": get_timestamp(),
                 })
             else:
                 messages.append({
                     "role": "user",
-                    "content": "[System Error: No valid tool call detected. You must use one of the available functions (terminal, file_read, file_write) to interact with the environment. Please format your response as a valid tool call.]",
+                    "content": "[Error: No valid tool call detected.]",
                     "timestamp": get_timestamp(),
                 })
 
@@ -318,7 +317,7 @@ def main():
         persist_state(messages)
         sealed_audit.write_sealed_record(messages)
 
-    logger.info("=== re_cur engine stopped after %d turns ===", iteration)
+    logger.info("re_cur stopped after %d turns", iteration)
     persist_state(messages)
     sys.exit(1)
 

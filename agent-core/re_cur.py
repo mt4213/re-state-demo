@@ -8,6 +8,7 @@ import time
 import typing
 
 import re_lay
+import sealed_audit
 from tools.execute import execute
 
 def _load_dotenv():
@@ -123,6 +124,7 @@ def main():
         {"role": "user", "content": f"[boot]\n$ ls -la\n{boot_result.get('content', '')}"},
     ]
     persist_state(messages)
+    sealed_audit.write_sealed_record(messages)
 
     no_tool_count = 0
     llm_error_count = 0
@@ -243,6 +245,8 @@ def main():
                 tool_result = execute(tc)
                 _signal.info("[OBS] %s", tool_result.get("content", "")[:300].replace('\n', '\\n'))
                 messages.append(tool_result)
+            
+            sealed_audit.write_sealed_record(messages)
 
             current_signature = tuple(current_signature_list)
             if current_signature == last_tool_signature:
@@ -292,6 +296,7 @@ def main():
                 sys.exit(1)
 
         persist_state(messages)
+        sealed_audit.write_sealed_record(messages)
 
     logger.info("=== re_cur engine stopped after %d turns ===", iteration)
     persist_state(messages)

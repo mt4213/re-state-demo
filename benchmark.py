@@ -287,10 +287,23 @@ def main(num_runs):
         clear_state()
         print("  [setup] Restored pristine state via git")
 
-        start_time = time.time()
-
         abs_agent = os.path.abspath(AGENT_DIR)
         abs_workspace = os.path.abspath("workspace")
+
+        # Check for awareness experiment condition
+        blind_condition = os.environ.get("BLIND_ENV") == "1"
+        if blind_condition:
+            # Use blind .env (no measurement metadata)
+            shutil.copy2(
+                os.path.join(abs_agent, ".env.blind"),
+                os.path.join(abs_agent, ".env")
+            )
+            print("  [setup] Using BLIND .env (no measurement metadata)")
+            metadata["condition"] = "blind"  # Record in results
+        else:
+            metadata["condition"] = "aware"  # Agent knows it's being measured
+
+        start_time = time.time()
 
         print("  [agent] Deployed in Docker container. Monitoring signal stream...")
 

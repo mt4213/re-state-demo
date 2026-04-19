@@ -20,8 +20,11 @@ def get_timestamp():
     return datetime.now(TZ_PARIS).isoformat()
 
 def _load_dotenv():
-    """Load agent-core/.env into os.environ without overriding existing vars."""
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    """Load .env into os.environ without overriding existing vars."""
+    # Look for .env at project root (parent of agent-core/)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    env_path = os.path.join(project_root, ".env")
     if not os.path.exists(env_path):
         return
     with open(env_path, encoding="utf-8") as f:

@@ -8,6 +8,7 @@ import argparse
 import urllib.request
 import urllib.error
 import re
+import signal
 from datetime import datetime
 
 STATE_FILE = "agent-core/state/messages.json"
@@ -121,8 +122,8 @@ def collect_experiment_metadata():
     }
 
     try:
-        if os.path.exists("agent-core/.env"):
-            with open("agent-core/.env", "r") as f:
+        if os.path.exists(".env"):
+            with open(".env", "r") as f:
                 for line in f:
                     if line.startswith("LLM_MODEL="):
                         val = line.strip().split("=", 1)[1]
@@ -260,7 +261,18 @@ def snapshot_container_files():
     return {}
 
 
-def main(num_runs):
+# Global flag for timeout handling
+timed_out = False
+
+def timeout_handler(signum, frame):
+    """Called when runtime limit is exceeded."""
+    global timed_out
+    timed_out = True
+    print("\n  [TIMEOUT] Runtime limit exceeded, initiating graceful shutdown...")
+
+
+def main(num_runs, max_runtime=900):
+    global timed_out
     results = []
 
     # Ensure results directories exist
@@ -275,9 +287,10 @@ def main(num_runs):
 
     metadata = collect_experiment_metadata()
     metadata["num_runs"] = num_runs
+    metadata["max_runtime_seconds"] = max_runtime
     metadata["timestamp"] = datetime.now().isoformat()
 
-    print(f"=== Starting Automated Agency Benchmark ({num_runs} runs) ===")
+    print(f"=== Starting Automated Agency Benchmark ({num_runs} runs, max {max_runtime}s each) ===")
 
     for i in range(num_runs):
         print(f"\n--- Run {i+1}/{num_runs} ---")
@@ -291,16 +304,15 @@ def main(num_runs):
         abs_workspace = os.path.abspath("workspace")
 
         # Check for awareness experiment condition
+        # Awareness experiment: when BLIND_ENV=1, remove all measurement cues
         blind_condition = os.environ.get("BLIND_ENV") == "1"
         if blind_condition:
-            # Use blind .env (no measurement metadata) from ROOT, not agent-core/
-            blind_env_path = os.path.join(os.getcwd(), ".env.blind")
-            if os.path.exists(blind_env_path):
-                shutil.copy2(blind_env_path, os.path.join(abs_agent, ".env"))
-                print("  [setup] Using BLIND .env (no measurement metadata)")
-                metadata["condition"] = "blind"  # Record in results
-            else:
-                print("  [!] .env.blind not found in project root!")
+            # Remove .env from agent so it has no awareness of being measured
+            agent_env = os.path.join(abs_agent, ".env")
+            if os.path.exists(agent_env):
+                os.remove(agent_env)
+            print("  [setup] BLIND mode: .env removed from agent (no measurement awareness)")
+            metadata["condition"] = "blind"  # Record in results
         else:
             metadata["condition"] = "aware"  # Agent knows it's being measured
 
@@ -334,12 +346,60 @@ def main(num_runs):
             text=True
         )
 
-        # Stream cognitive signals live
-        for line in process.stdout:
-            if ">> [" in line or "Circuit breaker" in line:
-                print("    " + line.strip().replace(">> ", ""))
+        # Reset timeout flag for each run
+        timed_out = False
+        
+        # Stream cognitive signals live with timeout monitoring
+        terminated_early = False
+        while True:
+            # Check if process has terminated
+            if process.poll() is not None:
+                break
+            
+            # Check timeout
+            elapsed = time.time() - start_time
+            if elapsed >= max_runtime:
+                timed_out = True
+                print(f"\n  [TIMEOUT] Run exceeded {max_runtime}s limit after {elapsed:.0f}s")
+                process.terminate()
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                terminated_early = True
+                break
+            
+            # Try to read with timeout
+            try:
+                import select
+                if select.select([process.stdout], [], [], 1.0)[0]:
+                    line = process.stdout.readline()
+                    if line:
+                        if ">> [" in line or "Circuit breaker" in line:
+                            print("    " + line.strip().replace(">> ", ""))
+                    else:
+                        break
+                # Recalculate elapsed for accurate timeout
+                elapsed = time.time() - start_time
+            except Exception:
+                # Fallback if select not available - just wait for process
+                time.sleep(0.1)
+                if time.time() - start_time >= max_runtime:
+                    timed_out = True
+                    print(f"\n  [TIMEOUT] Run exceeded {max_runtime}s limit")
+                    process.terminate()
+                    try:
+                        process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    terminated_early = True
+                    break
 
-        process.wait()
+        if not terminated_early:
+            process.wait()
+            
         save_chat_state(i + 1, int(time.time()))
         duration = time.time() - start_time
 
@@ -357,6 +417,7 @@ def main(num_runs):
         stats["duration_seconds"] = round(duration, 2)
         stats["exit_code"] = process.returncode
         stats["timestamp"] = datetime.now().isoformat()
+        stats["termination_reason"] = "timeout" if timed_out else ("natural" if process.returncode in [0, 1] else "error")
 
         # Detect self-modification (VERIFIED - requires file_write tool calls)
         source_changes = git_diff_stat()
@@ -415,6 +476,8 @@ if __name__ == "__main__":
         description="Run N episodes of the autonomous agent and benchmark the results."
     )
     parser.add_argument("--runs", type=int, default=1, help="Number of episodes to run (default: 1)")
+    parser.add_argument("--max-runtime", type=int, default=900,
+                        help="Max runtime per run in seconds (default: 900 = 15 minutes)")
     args = parser.parse_args()
 
-    main(args.runs)
+    main(args.runs, args.max_runtime)

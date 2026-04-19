@@ -3,7 +3,7 @@
 get_env() {
     local key=$1
     local default=$2
-    local val=$(grep "^${key}=" agent-core/.env 2>/dev/null | cut -d '=' -f 2-)
+    local val=$(grep "^${key}=" .env 2>/dev/null | cut -d '=' -f 2-)
     echo "${val:-$default}"
 }
 
@@ -16,7 +16,7 @@ LLM_PARALLEL=$(get_env "LLM_PARALLEL" "1")
 LLM_DEFRAG_THOLD=$(get_env "LLM_DEFRAG_THOLD" "0.1")
 LLM_FLASH_ATTENTION=$(get_env "LLM_FLASH_ATTENTION" "on")
 
-LLM_MODEL=$(grep '^LLM_MODEL=' agent-core/.env | cut -d '=' -f 2)
+LLM_MODEL=$(grep '^LLM_MODEL=' .env | cut -d '=' -f 2)
 MODEL_FILENAME=$(basename "$LLM_MODEL")
 
 if [[ "$MODEL_FILENAME" != *".gguf" ]]; then

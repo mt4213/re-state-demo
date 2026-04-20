@@ -3,7 +3,7 @@
 get_env() {
     local key=$1
     local default=$2
-    local val=$(grep "^${key}=" .env 2>/dev/null | cut -d '=' -f 2-)
+    local val=$(grep "^${key}=" .env 2>/dev/null | cut -d '=' -f 2- | sed 's/#.*$//' | tr -d ' ')
     echo "${val:-$default}"
 }
 
@@ -38,6 +38,6 @@ exec docker run --rm --name recur-llama-daemon --gpus all \
   --threads 6 \
   --ubatch-size ${LLM_BATCH_SIZE} \
   --no-mmap \
-   --mlock
+  --mlock
 
 

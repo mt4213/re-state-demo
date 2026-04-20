@@ -112,16 +112,19 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Build assistant message: include tool_calls if present, otherwise empty content
-            # With Qwen3 thinking mode enabled, content is treated as prefill and causes errors.
-            # But tool_calls without content should be allowed.
-            assistant_msg = {"role": role}
+            # Only include assistant messages if they have content or tool_calls.
+            # Empty assistant messages with no content and no tool_calls cause
+            # "Assistant response prefill is incompatible with enable_thinking" errors.
             tc = msg.get("tool_calls")
-            if tc:
-                assistant_msg["tool_calls"] = tc
-            else:
-                assistant_msg["content"] = ""
-            clean_messages.append(assistant_msg)
+            content = msg.get("content")
+            if tc or (content and content.strip()):
+                assistant_msg = {"role": role}
+                if tc:
+                    assistant_msg["tool_calls"] = tc
+                if content and content.strip():
+                    assistant_msg["content"] = content
+                clean_messages.append(assistant_msg)
+            # else: skip this empty assistant message
 
     # Remove empty system messages
     clean_messages = [
@@ -249,16 +252,19 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Build assistant message: include tool_calls if present, otherwise empty content
-            # With Qwen3 thinking mode enabled, content is treated as prefill and causes errors.
-            # But tool_calls without content should be allowed.
-            assistant_msg = {"role": role}
+            # Only include assistant messages if they have content or tool_calls.
+            # Empty assistant messages with no content and no tool_calls cause
+            # "Assistant response prefill is incompatible with enable_thinking" errors.
             tc = msg.get("tool_calls")
-            if tc:
-                assistant_msg["tool_calls"] = tc
-            else:
-                assistant_msg["content"] = ""
-            clean_messages.append(assistant_msg)
+            content = msg.get("content")
+            if tc or (content and content.strip()):
+                assistant_msg = {"role": role}
+                if tc:
+                    assistant_msg["tool_calls"] = tc
+                if content and content.strip():
+                    assistant_msg["content"] = content
+                clean_messages.append(assistant_msg)
+            # else: skip this empty assistant message
 
     # Remove empty system messages
     clean_messages = [

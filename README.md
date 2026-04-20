@@ -363,6 +363,48 @@ A concrete 5-step pipeline for human-agent collaboration:
 
   
 
+## Internet Killswitch
+
+To cut and restore outbound internet access on the host (useful when running experiments that should be network-isolated):
+
+```bash
+sudo internet off    # block internet; LAN + existing SSH sessions stay up
+sudo internet on     # restore full access
+sudo internet status # show current rules
+```
+
+**Setup** (one-time, requires `iptables` and `ip6tables` — standard on most Linux distros):
+
+```bash
+sudo tee /usr/local/bin/internet > /dev/null << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+LAN=$(ip route show scope link | awk '/proto/ {print $1}' | head -1)
+_block() {
+    iptables  -F OUTPUT; ip6tables -F OUTPUT
+    iptables  -A OUTPUT -o lo -j ACCEPT
+    iptables  -A OUTPUT -d "$LAN" -j ACCEPT
+    iptables  -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    iptables  -A OUTPUT -j DROP
+    ip6tables -A OUTPUT -o lo -j ACCEPT
+    ip6tables -A OUTPUT -d fe80::/10 -j ACCEPT
+    ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    ip6tables -A OUTPUT -d 2000::/3 -j DROP
+    echo "[killswitch] Internet BLOCKED."
+}
+_unblock() { iptables -F OUTPUT; ip6tables -F OUTPUT; echo "[killswitch] Internet ALLOWED."; }
+_status()  { iptables -L OUTPUT -n --line-numbers; ip6tables -L OUTPUT -n --line-numbers; }
+case "${1:-}" in off) _block;; on) _unblock;; status) _status;; *) echo "Usage: internet {on|off|status}"; exit 1;; esac
+EOF
+sudo chmod +x /usr/local/bin/internet
+```
+
+> Rules are not persistent — they reset on reboot. VS Code SSH (inbound) is unaffected.
+
+---
+
+  
+
 ## Historical Behavioral Milestones
 
   

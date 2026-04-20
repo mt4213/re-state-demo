@@ -280,9 +280,9 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
     
     # Ensure we have at least one message (required by API)
     if not clean_messages:
-        # All messages were filtered out - add a dummy user message as fallback
+        # All messages were filtered out - add a dummy system message as fallback
         # This prevents "No messages provided" error from llama.cpp
-        clean_messages.append({"role": "user", "content": "Continue."})
+        clean_messages.append({"role": "system", "content": "."})
 
     payload = {
         "model": model,

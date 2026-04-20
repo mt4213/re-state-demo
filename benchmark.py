@@ -323,11 +323,14 @@ def main(num_runs, max_runtime=900):
         # Launch the agent inside a Docker container for physical isolation.
         # Only agent-core/ and workspace/ are mounted — .git, benchmark.py,
         # analyze_session.py do not exist inside the container.
+        # Mount .env from project root so env_config.py can find it inside container
+        abs_env = os.path.abspath(".env")
         docker_cmd = [
             "docker", "run", "--rm",
             "--network", "host",
             "-v", f"{abs_agent}:/sandbox/agent-core",
             "-v", f"{abs_workspace}:/sandbox/workspace",
+            "-v", f"{abs_env}:/sandbox/.env:ro",
             "-w", "/sandbox",
             "-e", "RECUR_SANDBOX=/sandbox",
         ]

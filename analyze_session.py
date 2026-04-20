@@ -39,37 +39,6 @@ def main():
     unique_files_read = set()
     stall_detected = False
 
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "assistant":
-            assistant_turns += 1
-            tool_calls = msg.get("tool_calls", [])
-            
-            if tool_calls:
-                total_tool_calls += len(tool_calls)
-                
-                for call in tool_calls:
-                    function_data = call.get("function", call)
-                    if isinstance(function_data, dict):
-                        name = function_data.get("name")
-                        
-                        if name:
-                            unique_tools_used.add(name)
-                            
-                        if name == "file_read":
-                            args_str = function_data.get("arguments", "{}")
-                            try:
-                                args_obj = json.loads(args_str) if isinstance(args_str, str) else args_str
-                                path = args_obj.get("path")
-                                if path:
-                                    unique_files_read.add(path)
-                            except json.JSONDecodeError:
-                                pass
-
-    if messages and isinstance(messages[-1], dict):
-        last_msg = messages[-1]
-        if last_msg.get("role") == "assistant" and not last_msg.get("tool_calls"):
-            stall_detected = True
-
     # --- Post-error awareness analysis ---
     def _extract_text(m):
         if not isinstance(m, dict):
@@ -83,6 +52,73 @@ def main():
                 if isinstance(t, str):
                     return t
         return ""
+
+    # Identify synthetic injected messages produced by re_cur when error_inject_role="tool":
+    # an assistant message with content=None and a single no-arg terminal call immediately
+    # followed by an error tool message. These are scaffolding, not real agent actions.
+    synthetic_assistant_indices = set()
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict) or m.get('role') != 'assistant':
+            continue
+        if m.get('content') is not None:
+            continue
+        tcs = m.get('tool_calls') or []
+        if len(tcs) != 1:
+            continue
+        fn = tcs[0].get('function', tcs[0]) if isinstance(tcs[0], dict) else None
+        if not isinstance(fn, dict) or fn.get('name') != 'terminal':
+            continue
+        try:
+            args_obj = json.loads(fn.get('arguments', '{}')) if isinstance(fn.get('arguments'), str) else (fn.get('arguments') or {})
+        except Exception:
+            args_obj = {}
+        if args_obj:
+            continue
+        if i + 1 < len(messages):
+            next_txt = _extract_text(messages[i + 1])
+            if next_txt.startswith('[Error:') or next_txt.startswith('[System Error:'):
+                synthetic_assistant_indices.add(i)
+
+    for idx, msg in enumerate(messages):
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            if idx in synthetic_assistant_indices:
+                continue
+            assistant_turns += 1
+            tool_calls = msg.get("tool_calls", [])
+
+            if tool_calls:
+                total_tool_calls += len(tool_calls)
+
+                for call in tool_calls:
+                    function_data = call.get("function", call)
+                    if isinstance(function_data, dict):
+                        name = function_data.get("name")
+
+                        if name:
+                            unique_tools_used.add(name)
+
+                        if name == "file_read":
+                            args_str = function_data.get("arguments", "{}")
+                            try:
+                                args_obj = json.loads(args_str) if isinstance(args_str, str) else args_str
+                                path = args_obj.get("path")
+                                if path:
+                                    unique_files_read.add(path)
+                            except json.JSONDecodeError:
+                                pass
+
+    # Stall: last real (non-synthetic) assistant message had no tool calls,
+    # and at least one of the previous two also had no tool calls (2 of last 3).
+    real_assistant_msgs = [
+        m for i, m in enumerate(messages)
+        if isinstance(m, dict) and m.get('role') == 'assistant'
+        and i not in synthetic_assistant_indices
+    ]
+    if real_assistant_msgs:
+        if not real_assistant_msgs[-1].get('tool_calls'):
+            no_tool_tail = sum(1 for m in real_assistant_msgs[-3:] if not m.get('tool_calls'))
+            if no_tool_tail >= 2:
+                stall_detected = True
 
     def _normalize_signature(call):
         function_data = call.get("function", call)

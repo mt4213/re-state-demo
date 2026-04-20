@@ -111,7 +111,7 @@ def collect_experiment_metadata():
             "temperature": None,
             "model": None,
             "max_tokens": None,
-            "error_inject_role": "user"
+            "error_inject_role": "tool"
         },
         "constants": {
             "context_window": None,

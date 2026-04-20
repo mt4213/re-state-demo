@@ -114,19 +114,10 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Only include assistant messages if they have content or tool_calls.
-            # Empty assistant messages with no content and no tool_calls cause
-            # "Assistant response prefill is incompatible with enable_thinking" errors.
-            tc = msg.get("tool_calls")
-            content = msg.get("content")
-            if tc or (content and content.strip()):
-                assistant_msg = {"role": role}
-                if tc:
-                    assistant_msg["tool_calls"] = tc
-                if content and content.strip():
-                    assistant_msg["content"] = content
-                clean_messages.append(assistant_msg)
-            # else: skip this empty assistant message
+            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
+            # with Qwen3 thinking mode. Any assistant content causes the error.
+            # The model will continue from the last tool result.
+            clean_messages.append({"role": role})
 
     # Remove empty system messages
     clean_messages = [
@@ -260,19 +251,10 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Only include assistant messages if they have content or tool_calls.
-            # Empty assistant messages with no content and no tool_calls cause
-            # "Assistant response prefill is incompatible with enable_thinking" errors.
-            tc = msg.get("tool_calls")
-            content = msg.get("content")
-            if tc or (content and content.strip()):
-                assistant_msg = {"role": role}
-                if tc:
-                    assistant_msg["tool_calls"] = tc
-                if content and content.strip():
-                    assistant_msg["content"] = content
-                clean_messages.append(assistant_msg)
-            # else: skip this empty assistant message
+            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
+            # with Qwen3 thinking mode. Any assistant content causes the error.
+            # The model will continue from the last tool result.
+            clean_messages.append({"role": role})
 
     # Remove empty system messages
     clean_messages = [
@@ -282,7 +264,7 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
     
     # Ensure we have at least one message (required by API)
     if not clean_messages:
-        # All messages were filtered out - add a dummy system message as fallback
+        # All messages were filtered out - add a dummy user message as fallback
         # This prevents "No messages provided" error from llama.cpp
         clean_messages.append({"role": "user", "content": "."})
 

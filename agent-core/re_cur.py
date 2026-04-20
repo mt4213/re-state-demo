@@ -113,7 +113,7 @@ def main():
     logger.info("re_cur engine starting (agent role: %s)", AGENT_ROLE)
 
     messages = [
-        {"role": AGENT_ROLE, "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
+        {"role": "system", "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
     ]
     persist_state(messages)
     sealed_audit.write_sealed_record(messages)

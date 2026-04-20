@@ -86,9 +86,6 @@ def _write_stream(data, force=False):
 def _stream_callback(content, tool_calls, reasoning=None):
     _write_stream({"content": content, "tool_calls": tool_calls, "reasoning": reasoning, "done": False})
 MAX_REPEATED_TOOL_TURNS = 4
-# Approximate char budget for messages (rough: 1 token ≈ 4 chars).
-# With -c 8192 and max_tokens=512, we have ~7680 tokens for input ≈ 30720 chars.
-# We reserve some headroom.
 MAX_HISTORY_CHARS = 25000
 MAX_ITERATIONS = 100
 

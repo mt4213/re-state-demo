@@ -10,7 +10,7 @@ import copy
 logger = logging.getLogger("re_lay")
 
 DEFAULT_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
-DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
+DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "10"))
 DEFAULT_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
 
 # Tool definitions for the LLM (OpenAI function-calling format)

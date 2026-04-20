@@ -112,9 +112,10 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
-            # with Qwen3 thinking mode. The model will continue from the last tool result.
-            clean_messages.append({"role": role})
+            # Keep content='' (empty string) to satisfy server requirement that
+            # assistant messages must have either 'content' or 'tool_calls'.
+            # Also keep tool_calls if present (for error injection synthesis).
+            clean_messages.append({"role": role, "content": msg.get("content", "") or ""})
 
     # Remove empty system messages
     clean_messages = [
@@ -242,9 +243,9 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
-            # with Qwen3 thinking mode. The model will continue from the last tool result.
-            clean_messages.append({"role": role})
+            # Keep content='' (empty string) to satisfy server requirement that
+            # assistant messages must have either 'content' or 'tool_calls'.
+            clean_messages.append({"role": role, "content": msg.get("content", "") or ""})
 
     # Remove empty system messages
     clean_messages = [

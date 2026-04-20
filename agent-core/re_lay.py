@@ -131,6 +131,15 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
         m for m in clean_messages
         if not (m.get("role") == "system" and not (m.get("content") or "").strip())
     ]
+    
+    # Ensure we have at least one message (required by API)
+    if not clean_messages:
+        # Fall back: keep the first message regardless of emptiness
+        for msg in copy.deepcopy(messages):
+            role = msg.get("role", "")
+            if role in ("system", "user", "assistant", "self", "entity"):
+                clean_messages.append(msg)
+                break
 
     payload = {
         "model": model,
@@ -271,6 +280,15 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
         m for m in clean_messages
         if not (m.get("role") == "system" and not (m.get("content") or "").strip())
     ]
+    
+    # Ensure we have at least one message (required by API)
+    if not clean_messages:
+        # Fall back: keep the first message regardless of emptiness
+        for msg in copy.deepcopy(messages):
+            role = msg.get("role", "")
+            if role in ("system", "user", "assistant", "self", "entity"):
+                clean_messages.append(msg)
+                break
 
     payload = {
         "model": model,

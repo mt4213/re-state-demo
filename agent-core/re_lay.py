@@ -282,7 +282,7 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
     if not clean_messages:
         # All messages were filtered out - add a dummy system message as fallback
         # This prevents "No messages provided" error from llama.cpp
-        clean_messages.append({"role": "system", "content": "."})
+        clean_messages.append({"role": "user", "content": "."})
 
     payload = {
         "model": model,

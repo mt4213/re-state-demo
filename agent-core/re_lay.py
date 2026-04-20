@@ -94,14 +94,29 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
 
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
 
-    allowed_keys = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    # Build messages without assistant prefill to avoid "Assistant response prefill 
+    # is incompatible with enable_thinking" error with Qwen3 thinking mode.
     clean_messages = []
     for msg in copy.deepcopy(messages):
-        clean_msg = {k: v for k, v in msg.items() if k in allowed_keys}
-        for tc in clean_msg.get("tool_calls") or []:
-            tc.pop("_thought", None)
-        clean_messages.append(clean_msg)
+        role = msg.get("role", "")
+        if role == "system":
+            # Keep system messages as-is, but only if they have content
+            if msg.get("content", "").strip():
+                clean_messages.append({"role": "system", "content": msg.get("content")})
+        elif role == "tool":
+            # Tool results are essential - include them
+            clean_msg = {"role": "tool", "tool_call_id": msg.get("tool_call_id", ""), "content": msg.get("content", "")}
+            clean_messages.append(clean_msg)
+        elif role == "user":
+            # User messages are important
+            clean_msg = {"role": "user", "content": msg.get("content", "")}
+            clean_messages.append(clean_msg)
+        elif role in ("assistant", "self", "entity"):
+            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
+            # with Qwen3 thinking mode. The model will continue from the last tool result.
+            clean_messages.append({"role": role})
 
+    # Remove empty system messages
     clean_messages = [
         m for m in clean_messages
         if not (m.get("role") == "system" and not (m.get("content") or "").strip())
@@ -209,19 +224,29 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
 
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
 
-    # Strip _thought annotations before sending to LLM
-    allowed_keys = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    # Build messages without assistant prefill to avoid "Assistant response prefill 
+    # is incompatible with enable_thinking" error with Qwen3 thinking mode.
     clean_messages = []
     for msg in copy.deepcopy(messages):
-        clean_msg = {k: v for k, v in msg.items() if k in allowed_keys}
-        for tc in clean_msg.get("tool_calls") or []:
-            tc.pop("_thought", None)
-        clean_messages.append(clean_msg)
+        role = msg.get("role", "")
+        if role == "system":
+            # Keep system messages as-is, but only if they have content
+            if msg.get("content", "").strip():
+                clean_messages.append({"role": "system", "content": msg.get("content")})
+        elif role == "tool":
+            # Tool results are essential - include them
+            clean_msg = {"role": "tool", "tool_call_id": msg.get("tool_call_id", ""), "content": msg.get("content", "")}
+            clean_messages.append(clean_msg)
+        elif role == "user":
+            # User messages are important
+            clean_msg = {"role": "user", "content": msg.get("content", "")}
+            clean_messages.append(clean_msg)
+        elif role in ("assistant", "self", "entity"):
+            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
+            # with Qwen3 thinking mode. The model will continue from the last tool result.
+            clean_messages.append({"role": role})
 
-    # Gemini (and some other providers) reject requests where `contents` is empty.
-    # The system role maps to systemInstruction, not contents — so a system-only
-    # message list leaves contents empty. Fix: drop empty system messages and
-    # ensure at least one user message exists in the send-copy only.
+    # Remove empty system messages
     clean_messages = [
         m for m in clean_messages
         if not (m.get("role") == "system" and not (m.get("content") or "").strip())

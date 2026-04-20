@@ -136,7 +136,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
     if not clean_messages:
         # All messages were filtered out - add a dummy user message as fallback
         # This prevents "No messages provided" error from llama.cpp
-        clean_messages.append({"role": "user", "content": "Continue."})
+        clean_messages.append({"role": "assistant", "content": "..."})
 
     payload = {
         "model": model,

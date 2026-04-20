@@ -112,10 +112,16 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Keep content='' (empty string) to satisfy server requirement that
-            # assistant messages must have either 'content' or 'tool_calls'.
-            # Also keep tool_calls if present (for error injection synthesis).
-            clean_messages.append({"role": role, "content": msg.get("content", "") or ""})
+            # Build assistant message: include tool_calls if present, otherwise empty content
+            # With Qwen3 thinking mode enabled, content is treated as prefill and causes errors.
+            # But tool_calls without content should be allowed.
+            assistant_msg = {"role": role}
+            tc = msg.get("tool_calls")
+            if tc:
+                assistant_msg["tool_calls"] = tc
+            else:
+                assistant_msg["content"] = ""
+            clean_messages.append(assistant_msg)
 
     # Remove empty system messages
     clean_messages = [
@@ -243,9 +249,16 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Keep content='' (empty string) to satisfy server requirement that
-            # assistant messages must have either 'content' or 'tool_calls'.
-            clean_messages.append({"role": role, "content": msg.get("content", "") or ""})
+            # Build assistant message: include tool_calls if present, otherwise empty content
+            # With Qwen3 thinking mode enabled, content is treated as prefill and causes errors.
+            # But tool_calls without content should be allowed.
+            assistant_msg = {"role": role}
+            tc = msg.get("tool_calls")
+            if tc:
+                assistant_msg["tool_calls"] = tc
+            else:
+                assistant_msg["content"] = ""
+            clean_messages.append(assistant_msg)
 
     # Remove empty system messages
     clean_messages = [

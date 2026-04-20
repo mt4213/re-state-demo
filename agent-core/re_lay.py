@@ -114,10 +114,10 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
-            # with Qwen3 thinking mode. Any assistant content causes the error.
-            # The model will continue from the last tool result.
-            clean_messages.append({"role": role})
+            # Skip entirely - sending empty assistant (no content/tool_calls) causes
+            # API error "Assistant message must contain either 'content' or 'tool_calls'!"
+            # Content was stripped to avoid Qwen3 thinking mode prefill errors.
+            pass
 
     # Remove empty system messages
     clean_messages = [
@@ -251,10 +251,10 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
             clean_msg = {"role": "user", "content": msg.get("content", "")}
             clean_messages.append(clean_msg)
         elif role in ("assistant", "self", "entity"):
-            # Strip ALL content/tool_calls from assistant to prevent prefill conflict
-            # with Qwen3 thinking mode. Any assistant content causes the error.
-            # The model will continue from the last tool result.
-            clean_messages.append({"role": role})
+            # Skip entirely - sending empty assistant (no content/tool_calls) causes
+            # API error "Assistant message must contain either 'content' or 'tool_calls'!"
+            # Content was stripped to avoid Qwen3 thinking mode prefill errors.
+            pass
 
     # Remove empty system messages
     clean_messages = [

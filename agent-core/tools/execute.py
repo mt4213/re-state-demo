@@ -1,5 +1,7 @@
 """Tool execution engine for re_cur."""
 
+import env_config  # noqa: F401 - ensures .env is loaded before module-level os.getenv() calls
+
 import json
 import logging
 import os

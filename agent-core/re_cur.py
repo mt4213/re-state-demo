@@ -1,5 +1,7 @@
 """re_cur — Core ContReAct loop for autonomous agent."""
 
+import env_config  # noqa: F401 - ensures .env is loaded before module-level os.getenv() calls
+
 import json
 import logging
 import os
@@ -19,23 +21,6 @@ def get_timestamp():
     """Get current UTC timestamp formatted for Europe/Paris timezone."""
     return datetime.now(TZ_PARIS).isoformat()
 
-def _load_dotenv():
-    """Load .env into os.environ without overriding existing vars."""
-    # Look for .env at project root (parent of agent-core/)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-    env_path = os.path.join(project_root, ".env")
-    if not os.path.exists(env_path):
-        return
-    with open(env_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
-
-_load_dotenv()
 
 logging.basicConfig(
     level=os.getenv("RECUR_LOG_LEVEL", "INFO"),

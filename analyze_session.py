@@ -118,19 +118,18 @@ def main():
 
         return (name, args_str)
 
-    # identify error injection messages
-    error_markers = [
-        "System Error: No valid tool call detected",
-        "[No valid tool call detected",
-        "[Error: No valid tool call was generated."
-    ]
-
+    # identify error injection messages using robust pattern matching
+    # Errors come in two forms from re_cur.py:
+    # 1. No-tool error: "[Error: No valid tool call detected.]" (role: tool/system/user)
+    # 2. Parse error: "[Error: Last response was truncated mid-generation...]" (role: tool)
+    
     error_indices = []
     for i, m in enumerate(messages):
         txt = _extract_text(m)
         if not txt:
             continue
-        if any(marker in txt for marker in error_markers):
+        # Match any tool message starting with [Error: - robust to variations
+        if txt.startswith("[Error:") or txt.startswith("[System Error:"):
             error_indices.append(i)
 
     # helper to detect if a path looks like source

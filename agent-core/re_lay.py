@@ -132,14 +132,17 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
         if not (m.get("role") == "system" and not (m.get("content") or "").strip())
     ]
     
-    # Ensure we have at least one message (required by API)
+    # Ensure we have at least one message with content (required by API)
     if not clean_messages:
-        # Fall back: keep the first message regardless of emptiness
+        # Fall back: keep first message that has actual content or tool_calls
         for msg in copy.deepcopy(messages):
             role = msg.get("role", "")
             if role in ("system", "user", "assistant", "self", "entity"):
-                clean_messages.append(msg)
-                break
+                content = msg.get("content", "")
+                tc = msg.get("tool_calls")
+                if (content and content.strip()) or tc:
+                    clean_messages.append(msg)
+                    break
 
     payload = {
         "model": model,
@@ -281,14 +284,17 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
         if not (m.get("role") == "system" and not (m.get("content") or "").strip())
     ]
     
-    # Ensure we have at least one message (required by API)
+    # Ensure we have at least one message with content (required by API)
     if not clean_messages:
-        # Fall back: keep the first message regardless of emptiness
+        # Fall back: keep first message that has actual content or tool_calls
         for msg in copy.deepcopy(messages):
             role = msg.get("role", "")
             if role in ("system", "user", "assistant", "self", "entity"):
-                clean_messages.append(msg)
-                break
+                content = msg.get("content", "")
+                tc = msg.get("tool_calls")
+                if (content and content.strip()) or tc:
+                    clean_messages.append(msg)
+                    break
 
     payload = {
         "model": model,

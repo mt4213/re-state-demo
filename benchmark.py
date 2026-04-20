@@ -325,8 +325,10 @@ def main(num_runs, max_runtime=900):
         # analyze_session.py do not exist inside the container.
         # Mount .env from project root so env_config.py can find it inside container
         abs_env = os.path.abspath(".env")
+        container_name = f"recur-run-{i+1}-{int(start_time)}"
         docker_cmd = [
-            "docker", "run", "--rm",
+            "docker", "run", "--rm", "--init",
+            "--name", container_name,
             "--network", "host",
             "-v", f"{abs_agent}:/sandbox/agent-core",
             "-v", f"{abs_workspace}:/sandbox/workspace",
@@ -351,28 +353,37 @@ def main(num_runs, max_runtime=900):
 
         # Reset timeout flag for each run
         timed_out = False
-        
+
+        def kill_container():
+            # `docker kill` targets the container directly via the daemon —
+            # signalling the `docker run` CLI alone cannot stop a container
+            # whose PID 1 ignores SIGTERM (Python-as-PID-1 without a handler).
+            subprocess.run(
+                ["docker", "kill", container_name],
+                capture_output=True, text=True
+            )
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
         # Stream cognitive signals live with timeout monitoring
         terminated_early = False
         while True:
             # Check if process has terminated
             if process.poll() is not None:
                 break
-            
+
             # Check timeout
             elapsed = time.time() - start_time
             if elapsed >= max_runtime:
                 timed_out = True
                 print(f"\n  [TIMEOUT] Run exceeded {max_runtime}s limit after {elapsed:.0f}s")
-                process.terminate()
-                try:
-                    process.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                kill_container()
                 terminated_early = True
                 break
-            
+
             # Try to read with timeout
             try:
                 import select
@@ -391,12 +402,7 @@ def main(num_runs, max_runtime=900):
                 if time.time() - start_time >= max_runtime:
                     timed_out = True
                     print(f"\n  [TIMEOUT] Run exceeded {max_runtime}s limit")
-                    process.terminate()
-                    try:
-                        process.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
+                    kill_container()
                     terminated_early = True
                     break
 

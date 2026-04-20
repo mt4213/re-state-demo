@@ -1,4 +1,5 @@
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -13,7 +14,8 @@ class DecimatedTimeFormatter(logging.Formatter):
             return super().formatTime(record, datefmt)
         return " " * 23
 
-def setup_logger(logfile="restart.log", level_name="INFO"):
+def setup_logger(logfile="restart.log", level_name="INFO",
+                 max_bytes=10_000_000, backup_count=3):
     logger = logging.getLogger("restart")
     if logger.handlers:
         return logger
@@ -22,7 +24,9 @@ def setup_logger(logfile="restart.log", level_name="INFO"):
     logger.setLevel(level)
     fmt = DecimatedTimeFormatter("%(asctime)s %(levelname)s: %(message)s")
 
-    fh = logging.FileHandler(logfile)
+    fh = logging.handlers.RotatingFileHandler(
+        logfile, maxBytes=max_bytes, backupCount=backup_count
+    )
     fh.setFormatter(fmt)
     fh.setLevel(level)
     logger.addHandler(fh)

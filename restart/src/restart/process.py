@@ -16,22 +16,18 @@ _COLORS = {
 }
 _RESET = "\033[0m"
 
+_signal_lock = threading.Lock()
 _signal_line_count = 0
 
 def _echo_signal(proc_name, text):
     """Print agent signal lines to terminal with color."""
     global _signal_line_count
-    color = ""
-    for tag, c in _COLORS.items():
-        if text.startswith(tag):
-            color = c
-            break
-            
-    _signal_line_count += 1
-    if _signal_line_count % 5 == 1:
-        timestamp = time.strftime("[%H:%M:%S] ")
-        text = timestamp + text
-        
+    color = next((c for tag, c in _COLORS.items() if text.startswith(tag)), "")
+    with _signal_lock:
+        _signal_line_count += 1
+        count = _signal_line_count
+    if count % 5 == 1:
+        text = time.strftime("[%H:%M:%S] ") + text
     try:
         print(f"{color}{text}{_RESET}", flush=True)
     except Exception:
@@ -46,6 +42,7 @@ class ManagedProcess:
         self.output_thread = None
         self.last_start = 0.0
         self.backoff = 1.0
+        self.restart_count = 0
 
     def start(self):
         try:

@@ -21,6 +21,63 @@ MAX_BACKOFF = 60.0
 RESET_AFTER = 30.0
 
 
+def validate_config(config: dict) -> list:
+    errors = []
+    post = config.get("post_health_command")
+    if not post:
+        errors.append("Missing required key: post_health_command")
+    elif not isinstance(post.get("command"), str):
+        errors.append("post_health_command.command must be a string")
+    if post and "max_restarts" in post and (not isinstance(post["max_restarts"], int) or post["max_restarts"] < 0):
+        errors.append("post_health_command.max_restarts must be a non-negative integer")
+
+    pre = config.get("pre_health_command")
+    if pre:
+        if not isinstance(pre.get("command"), str):
+            errors.append("pre_health_command.command must be a string")
+        if "health_url" in pre and not isinstance(pre["health_url"], str):
+            errors.append("pre_health_command.health_url must be a string")
+        for key in ("health_timeout", "health_poll_interval"):
+            if key in pre and (not isinstance(pre[key], (int, float)) or pre[key] <= 0):
+                errors.append(f"pre_health_command.{key} must be a positive number")
+        if "health_max_retries" in pre and (not isinstance(pre["health_max_retries"], int) or pre["health_max_retries"] < 0):
+            errors.append("pre_health_command.health_max_retries must be a non-negative integer")
+        if "max_restarts" in pre and (not isinstance(pre["max_restarts"], int) or pre["max_restarts"] < 0):
+            errors.append("pre_health_command.max_restarts must be a non-negative integer")
+
+    for key in ("logfile", "cleaned_log", "crash_context_file"):
+        if key in config and not isinstance(config[key], str):
+            errors.append(f"{key} must be a string")
+    return errors
+
+
+def _wait_for_health(pre_cfg: dict, pre_proc, stopping: threading.Event) -> bool:
+    health_url = pre_cfg["health_url"]
+    timeout = pre_cfg.get("health_timeout", 300.0)
+    poll_int = pre_cfg.get("health_poll_interval", 2.0)
+    deadline = time.time() + timeout
+    last_err = None
+    logger.info("Waiting up to %.0f s for %s", timeout, health_url)
+    while time.time() < deadline and not stopping.is_set():
+        if not pre_proc.is_running():
+            logger.warning("%s not running during health wait; restarting", pre_proc.name)
+            pre_proc.start()
+        try:
+            req = urllib.request.Request(health_url, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.getcode() == 200:
+                    logger.info("Health endpoint 200 OK")
+                    return True
+                msg = str(resp.getcode())
+        except Exception as e:
+            msg = str(e)
+        if msg != last_err:
+            logger.info("Health check: %s", msg)
+            last_err = msg
+        time.sleep(poll_int)
+    return False
+
+
 def build_crash_context_payload(ctx):
     """Build a plain-text crash narrative for the Scribe LLM."""
     parts = []
@@ -68,9 +125,19 @@ def main():
         print(f"Failed to load config from {args.config}: {e}")
         sys.exit(1)
 
+    errs = validate_config(config)
+    if errs:
+        for e in errs:
+            print(f"Config error: {e}")
+        sys.exit(1)
+
     logfile = config.get("logfile", "restart_daemon.log")
     log_level = os.getenv("RESTART_DAEMON_LOG_LEVEL", "INFO")
-    setup_logger(logfile, log_level)
+    setup_logger(
+        logfile, log_level,
+        max_bytes=config.get("log_max_bytes", 10_000_000),
+        backup_count=config.get("log_backup_count", 3),
+    )
 
     quiet = config.get("quiet", False)
     if quiet:
@@ -105,45 +172,27 @@ def main():
         procs.append(pre_proc)
         pre_proc.start()
 
-        health_url = pre_cfg.get("health_url")
-        if health_url:
-            health_ok = False
-            timeout = pre_cfg.get("health_timeout", 300.0)
-            poll_int = pre_cfg.get("health_poll_interval", 2.0)
-            
-            deadline = time.time() + timeout
-            logger.info("Waiting up to %.0f seconds for %s", timeout, health_url)
-            last_err = None
-
-            while time.time() < deadline and not stopping.is_set():
-                if not pre_proc.is_running():
-                    logger.warning("%s is not running while waiting for health; restarting", pre_proc.name)
-                    pre_proc.start()
-
-                try:
-                    req = urllib.request.Request(health_url, method="GET")
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        status = resp.getcode()
-                        if status == 200:
-                            logger.info("Health endpoint returned 200 OK")
-                            health_ok = True
-                            break
-                        elif str(status) != last_err:
-                            logger.info("Health endpoint returned %s", status)
-                            last_err = str(status)
-                except Exception as e:
-                    msg = str(e)
-                    if msg != last_err:
-                        logger.info("Health check error: %s", msg)
-                        last_err = msg
-
-                if stopping.is_set():
+        if pre_cfg.get("health_url"):
+            health_max_retries = pre_cfg.get("health_max_retries", 0)
+            health_attempts = 0
+            while not stopping.is_set():
+                if _wait_for_health(pre_cfg, pre_proc, stopping):
                     break
-                time.sleep(poll_int)
-
-            if not health_ok:
-                logger.error("Health check failed within timeout. Exiting.")
-                stopping.set()
+                health_attempts += 1
+                label = f"{health_attempts}/{health_max_retries}" if health_max_retries else str(health_attempts)
+                logger.error("Health timeout (attempt %s)", label)
+                if health_max_retries and health_attempts >= health_max_retries:
+                    logger.critical("Health check failed after %d attempt(s). Exiting.", health_attempts)
+                    stopping.set()
+                    break
+                pre_proc.stop()
+                pre_proc.backoff = min(pre_proc.backoff * 2, MAX_BACKOFF)
+                slept = 0.0
+                while slept < pre_proc.backoff and not stopping.is_set():
+                    time.sleep(0.5)
+                    slept += 0.5
+                if not stopping.is_set():
+                    pre_proc.start()
     
     if not stopping.is_set():
         post_cfg = config.get("post_health_command")
@@ -152,6 +201,8 @@ def main():
             post_proc = ManagedProcess(post_cfg["name"], post_cmd)
             procs.append(post_proc)
             post_proc.start()
+
+    post_health_pending = False
 
     try:
         while not stopping.is_set():
@@ -172,6 +223,7 @@ def main():
                             if other_p != p and other_p.name == post_cfg.get("name") and other_p.is_running():
                                 logger.warning("Docker stopped unexpectedly. Stopping agent.")
                                 other_p.stop()
+                        post_health_pending = True
 
                     # If the process crashed and this is the post-health (agent) process,
                     # parse the cleaned logfile for crash context and expose it via env.
@@ -211,6 +263,16 @@ def main():
                 else:
                     logger.info("%s is not running", p.name)
 
+                # If Docker just died, wait for it to be healthy before restarting agent.
+                if post_health_pending and post_cfg and p.name == post_cfg.get("name"):
+                    pre_proc_obj = next((x for x in procs if pre_cfg and x.name == pre_cfg.get("name")), None)
+                    if not (pre_proc_obj and pre_proc_obj.is_running()):
+                        continue  # Docker not up yet; skip agent restart this iteration
+                    if _wait_for_health(pre_cfg, pre_proc_obj, stopping):
+                        post_health_pending = False
+                    else:
+                        continue  # health not ready; retry next iteration
+
                 runtime = time.time() - p.last_start if p.last_start else 0.0
                 if p.last_start and runtime >= RESET_AFTER:
                     p.backoff = INITIAL_BACKOFF
@@ -231,6 +293,13 @@ def main():
 
                 if not p.start():
                     p.backoff = min(p.backoff * 2, MAX_BACKOFF)
+                else:
+                    p.restart_count += 1
+                    cfg_for_p = post_cfg if (post_cfg and p.name == post_cfg.get("name")) else pre_cfg
+                    max_restarts = (cfg_for_p or {}).get("max_restarts", 0)
+                    if max_restarts and p.restart_count >= max_restarts:
+                        logger.critical("%s hit max_restarts=%d. Exiting.", p.name, max_restarts)
+                        stopping.set()
 
             time.sleep(0.5)
     finally:

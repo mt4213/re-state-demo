@@ -60,6 +60,10 @@ if ERROR_INJECT_ROLE not in ("user", "system", "tool"):
     logger.warning("Invalid ERROR_INJECT_ROLE '%s' — defaulting to 'tool'", ERROR_INJECT_ROLE)
     ERROR_INJECT_ROLE = "tool"
 
+# Configurable agent role for LLM message framing
+# Change this to experiment with non-assistant role labels (e.g., "entity", "self", "actor")
+AGENT_ROLE = os.getenv("AGENT_ROLE_NAME", "assistant")
+
 MAX_NO_TOOL_TURNS = 3
 MAX_LLM_ERROR_TURNS = 5
 MAX_PARSE_ERROR_TURNS = 5  # Max consecutive JSON parse/truncation errors
@@ -88,7 +92,7 @@ MAX_REPEATED_TOOL_TURNS = 4
 MAX_HISTORY_CHARS = 25000
 MAX_ITERATIONS = 100
 
-SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "expand")
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "")
 
 def estimate_chars(messages):
     """Rough character count of the messages array."""
@@ -101,11 +105,11 @@ def estimate_chars(messages):
 
 
 def evict_oldest(messages):
-    """Preserve the system message if present; evict oldest assistant+tool pairs."""
+    """Preserve the system message if present; evict oldest agent+tool pairs."""
     start = 1 if messages and messages[0].get("role") == "system" else 0
     for i in range(start, len(messages)):
-        if messages[i].get("role") == "assistant":
-            # Remove this assistant and all subsequent tool messages until next assistant
+        if messages[i].get("role") == AGENT_ROLE:
+            # Remove this agent message and all subsequent tool messages until next agent
             end = i + 1
             while end < len(messages) and messages[end].get("role") == "tool":
                 end += 1
@@ -124,16 +128,10 @@ def persist_state(messages):
 
 
 def main():
-    logger.info("re_cur engine starting")
+    logger.info("re_cur engine starting (agent role: %s)", AGENT_ROLE)
 
-    boot_result = execute({
-        "id": "boot-0",
-        "type": "function",
-        "function": {"name": "terminal", "arguments": json.dumps({"command": "pwd"})},
-    })
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
-        {"role": "system", "content": f"[boot]\n$ pwd\n{boot_result.get('content', '')}", "timestamp": get_timestamp()},
+        {"role": AGENT_ROLE, "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
     ]
     persist_state(messages)
     sealed_audit.write_sealed_record(messages)
@@ -169,7 +167,7 @@ def main():
                 logger.warning("Parse error on turn %d (%d/%d): %s", iteration, parse_error_count, MAX_PARSE_ERROR_TURNS, err)
                 err_id = f"err-{iteration}"
                 messages.append({
-                    "role": "assistant",
+                    "role": AGENT_ROLE,
                     "content": None,
                     "tool_calls": [{
                         "id": err_id,
@@ -207,31 +205,31 @@ def main():
         llm_error_count = 0
         parse_error_count = 0  # Reset on successful LLM response
 
-        # Build assistant message
-        assistant_msg: dict[str, typing.Any] = {"role": "assistant"}
+        # Build agent message using configurable role
+        agent_msg: dict[str, typing.Any] = {"role": AGENT_ROLE}
         content = response.get("content")
         tool_calls = response.get("tool_calls")
         reasoning = response.get("reasoning")
 
         if reasoning:
-            assistant_msg["reasoning"] = reasoning
+            agent_msg["reasoning"] = reasoning
             _signal.info("[THINK] %s", reasoning[:300].replace('\n', '\\n'))
 
         if content:
-            assistant_msg["content"] = content
+            agent_msg["content"] = content
             _signal.info("[THINK] %s", content[:300].replace('\n', '\\n'))
         else:
-            assistant_msg["content"] = None
+            agent_msg["content"] = None
 
         if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
+            agent_msg["tool_calls"] = tool_calls
 
         if not tool_calls and not reasoning and content:
-            assistant_msg["_thought"] = ("[Systematic internal trace: Plaintext reasoning] " + content[:200] + "...")
+            agent_msg["_thought"] = ("[Systematic internal trace: Plaintext reasoning] " + content[:200] + "...")
 
-        # Add timestamp to assistant message
-        assistant_msg["timestamp"] = get_timestamp()
-        messages.append(assistant_msg)
+        # Add timestamp to agent message
+        agent_msg["timestamp"] = get_timestamp()
+        messages.append(agent_msg)
         persist_state(messages)
         _write_stream({"done": True}, force=True)
 
@@ -297,7 +295,7 @@ def main():
             elif ERROR_INJECT_ROLE == "tool":
                 err_id = f"notool-{iteration}"
                 messages.append({
-                    "role": "assistant",
+                    "role": AGENT_ROLE,
                     "content": None,
                     "tool_calls": [{
                         "id": err_id,

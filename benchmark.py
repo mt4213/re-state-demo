@@ -15,7 +15,7 @@ from datetime import datetime
 STATE_FILE = "agent-core/state/messages.json"
 STREAM_FILE = "agent-core/state/stream.json"
 AGENT_DIR = "agent-core"
-RESULTS_DIR = "eval_results"
+RESULTS_DIR = "eval-dashboard/src/data"
 DIFFS_DIR = os.path.join(RESULTS_DIR, "diffs")
 CHATS_DIR = os.path.join(RESULTS_DIR, "chats")
 

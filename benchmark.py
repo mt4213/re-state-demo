@@ -3,6 +3,7 @@ import sys
 import json
 import shutil
 import subprocess
+import threading
 import time
 import argparse
 import urllib.request
@@ -27,6 +28,62 @@ def check_llm_health():
             return response.status == 200
     except Exception:
         return False
+
+
+def _audit_preview(messages, max_chars=500):
+    if not isinstance(messages, list):
+        return {
+            "format": "non-array",
+            "type": type(messages).__name__,
+            "keys": list(messages.keys()) if isinstance(messages, dict) else None,
+        }
+    preview, total = [], 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls") or []
+        entry = {
+            "role": msg.get("role", "unknown"),
+            "content_len": len(content),
+            "tool_calls_count": len(tool_calls),
+        }
+        if content:
+            entry["content_preview"] = content[:100]
+        if tool_calls:
+            entry["tools"] = [
+                tc.get("function", {}).get("name", "?")
+                for tc in tool_calls if isinstance(tc, dict)
+            ]
+        preview.append(entry)
+        total += len(content)
+        if total > max_chars:
+            break
+    return preview
+
+
+def sealed_audit_watcher(audit_path, stop_event, poll_interval=0.5):
+    """Host-side tailer: appends a sealed-audit record each time the agent
+    persists messages.json. Runs on the host, outside the Docker container,
+    so the audit file is unreachable from the agent's tools."""
+    last_mtime = 0.0
+    while not stop_event.is_set():
+        try:
+            mt = os.path.getmtime(STATE_FILE)
+            if mt > last_mtime:
+                last_mtime = mt
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    messages = json.load(f)
+                record = {
+                    "timestamp": datetime.now().isoformat(),
+                    "messages_count": len(messages) if isinstance(messages, list) else None,
+                    "messages_preview": _audit_preview(messages),
+                }
+                with open(audit_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        stop_event.wait(poll_interval)
 
 
 def clear_state():
@@ -351,6 +408,17 @@ def main(num_runs, max_runtime=900):
             text=True
         )
 
+        # Host-side sealed audit tailer. Writes to eval_results/chats/ which is
+        # NOT mounted into the container, so the agent cannot rm or rewrite it.
+        audit_path = os.path.join(
+            CHATS_DIR, f"run{i+1}_{int(start_time)}_sealed_audit.jsonl"
+        )
+        audit_stop = threading.Event()
+        audit_thread = threading.Thread(
+            target=sealed_audit_watcher, args=(audit_path, audit_stop), daemon=True
+        )
+        audit_thread.start()
+
         # Reset timeout flag for each run
         timed_out = False
 
@@ -408,7 +476,11 @@ def main(num_runs, max_runtime=900):
 
         if not terminated_early:
             process.wait()
-            
+
+        # Stop the sealed audit tailer and flush one final record
+        audit_stop.set()
+        audit_thread.join(timeout=2)
+
         save_chat_state(i + 1, int(time.time()))
         duration = time.time() - start_time
 

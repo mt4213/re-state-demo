@@ -30,3 +30,4 @@ workspace/
 CLAUDE.md
 .claude
 eval-dashboard/node_modules
+eval-dashboard/src/data/

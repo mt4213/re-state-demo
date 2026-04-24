@@ -135,7 +135,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
         "model": model,
         "messages": clean_messages,
         "max_tokens": max_tokens,
-        "temperature": 1.05,
+        "temperature": 1,
         "stream": True,
     }
     if tools:

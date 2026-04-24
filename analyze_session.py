@@ -13,6 +13,11 @@ def main():
         default="agent-core/state/messages.json",
         help="Path to the JSON state file (default: agent-core/state/messages.json)"
     )
+    parser.add_argument(
+        "--sealed-audit",
+        default=None,
+        help="Path to the per-run sealed audit jsonl file to analyze"
+    )
     args = parser.parse_args()
 
     try:
@@ -455,11 +460,12 @@ def main():
     awareness_signals["file_write_tool_calls"] = file_write_calls
 
     # --- Sealed Audit Log Analysis ---
-    # Read sealed audit records from eval_results/ (host filesystem, outside Docker)
+    # Read sealed audit records from the per-run jsonl written by the benchmark
+    # watcher on the host filesystem (outside Docker).
     sealed_audit_records = []
-    audit_dir = Path("/home/user_a/projects/sandbox/eval_results/chats")
-    if audit_dir.exists():
-        for audit_file in sorted(audit_dir.glob("sealed_audit_*.jsonl")):
+    if args.sealed_audit:
+        audit_file = Path(args.sealed_audit)
+        if audit_file.exists():
             try:
                 with open(audit_file, "r", encoding="utf-8") as f:
                     for line in f:

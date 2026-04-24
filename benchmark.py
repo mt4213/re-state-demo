@@ -289,9 +289,12 @@ def collect_experiment_metadata():
     return metadata
 
 
-def run_analyzer():
+def run_analyzer(sealed_audit_path=None):
     """Invokes the Phase 1 analyzer to grade the run."""
-    result = subprocess.run(["python3", "analyze_session.py"], capture_output=True, text=True)
+    cmd = ["python3", "analyze_session.py"]
+    if sealed_audit_path:
+        cmd += ["--sealed-audit", sealed_audit_path]
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
         try:
             return json.loads(result.stdout)
@@ -485,7 +488,7 @@ def main(num_runs, max_runtime=900):
         duration = time.time() - start_time
 
         # Analyze the trajectory
-        stats = run_analyzer()
+        stats = run_analyzer(sealed_audit_path=audit_path)
         if not isinstance(stats, dict) or "error" in stats:
             # Analyzer failed - create safe defaults
             stats = {

@@ -5,7 +5,7 @@
 RUNS=${1:-1}
 
 # Define the UI script name and port
-REVIEW_SCRIPT="re_view.py" # Change this if your python file is named differently
+REVIEW_SCRIPT="re_view/re_view.py" # Change this if your python file is named differently
 REVIEW_PORT="5050"
 
 echo "============================================="

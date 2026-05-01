@@ -31,7 +31,7 @@ python3 re_view/re_view.py   # → http://localhost:5050
 
 ```bash
 cd restart && python -m venv .venv && .venv/bin/pip install -e . && cd ..
-python -m restart --config restart/config.gemini.json
+restart/.venv/bin/python -m restart --config restart/config.local.json
 ```
 
 **Benchmark** N isolated runs with measurement (requires Docker + a running llama.cpp server):

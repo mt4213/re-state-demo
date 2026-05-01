@@ -101,7 +101,7 @@ The agent reads LLM settings from `agent-core/.env` at startup. Edit that file t
 ### Local llama.cpp
 
 ```sh
-python -m restart --config /home/user_a/projects/sandbox/restart/config.local.json
+/home/user_a/projects/sandbox/restart/.venv/bin/python -m restart --config /home/user_a/projects/sandbox/restart/config.local.json
 ```
 
 Starts Docker + llama.cpp, waits for health check, then starts the agent.
@@ -111,7 +111,7 @@ Starts Docker + llama.cpp, waits for health check, then starts the agent.
 Edit `agent-core/.env`: comment out the local block, uncomment the Gemini block, and fill in your API key. Then:
 
 ```sh
-python -m restart --config /home/user_a/projects/sandbox/restart/config.gemini.json
+/home/user_a/projects/sandbox/restart/.venv/bin/python -m restart --config /home/user_a/projects/sandbox/restart/config.gemini.json
 ```
 
 No Docker is started — the agent connects directly to the Gemini API.

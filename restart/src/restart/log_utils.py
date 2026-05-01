@@ -4,6 +4,13 @@ from collections import deque
 from typing import Dict, List, Optional, TypedDict, cast
 
 
+# Marker the daemon writes to its log on every agent (post_health_command) start.
+# parse_crash_context trims the tail to only lines after the most recent marker
+# so each crash summary reflects a single agent session, not a concatenation of
+# all sessions still present in the rotating log.
+AGENT_SESSION_MARKER = "=== AGENT SESSION START ==="
+
+
 class ParsedEvent(TypedDict):
     type: str
     lines: List[str]
@@ -13,6 +20,19 @@ def _tail_lines(path: str, n: int = 1000) -> List[str]:
     """Return the last `n` lines from `path` efficiently."""
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         return list(deque(f, maxlen=n))
+
+
+def _trim_to_latest_session(lines: List[str]) -> List[str]:
+    """Drop everything before the most recent AGENT_SESSION_MARKER.
+
+    If no marker is present (e.g. log predates the marker, or the marker
+    rotated out of the tail window), return `lines` unchanged so behavior
+    is unchanged on legacy logs.
+    """
+    for i in range(len(lines) - 1, -1, -1):
+        if AGENT_SESSION_MARKER in lines[i]:
+            return lines[i + 1:]
+    return lines
 
 
 def parse_crash_context(log_path: str = "~/cleaned.log",
@@ -48,6 +68,9 @@ def parse_crash_context(log_path: str = "~/cleaned.log",
 
     try:
         raw_lines = _tail_lines(target_path, n=tail_lines_count)
+        # Bound the parse window to the most recent agent session so crash
+        # context never bleeds in events from prior sessions.
+        raw_lines = _trim_to_latest_session(raw_lines)
         # Flatten escaped strings so they are treated as structural lines
         flattened_log = "".join(raw_lines).replace('\\n', '\n')
         lines = flattened_log.split('\n')

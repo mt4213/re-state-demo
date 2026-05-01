@@ -34,3 +34,4 @@ eval-dashboard/src/data/
 
 *.egg-info/
 restart/.crash_context.log
+plans/

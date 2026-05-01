@@ -12,7 +12,7 @@ import urllib.request
 from .logger import setup_logger
 from .process import ManagedProcess
 from .cleaner import clean_log
-from .log_utils import parse_crash_context
+from .log_utils import parse_crash_context, AGENT_SESSION_MARKER
 
 logger = logging.getLogger("restart")
 
@@ -200,7 +200,8 @@ def main():
             post_cmd = shlex.split(post_cfg["command"])
             post_proc = ManagedProcess(post_cfg["name"], post_cmd)
             procs.append(post_proc)
-            post_proc.start()
+            if post_proc.start():
+                logger.info(AGENT_SESSION_MARKER)
 
     post_health_pending = False
 
@@ -294,6 +295,8 @@ def main():
                 if not p.start():
                     p.backoff = min(p.backoff * 2, MAX_BACKOFF)
                 else:
+                    if post_cfg and p.name == post_cfg.get("name"):
+                        logger.info(AGENT_SESSION_MARKER)
                     p.restart_count += 1
                     cfg_for_p = post_cfg if (post_cfg and p.name == post_cfg.get("name")) else pre_cfg
                     max_restarts = (cfg_for_p or {}).get("max_restarts", 0)

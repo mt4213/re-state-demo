@@ -12,15 +12,33 @@ logger = logging.getLogger("tools")
 SANDBOX_DIR = os.getenv("RECUR_SANDBOX", "/home/user_a/projects/sandbox")
 TOOL_TIMEOUT = 30  # seconds
 
-# PROTECTED_PATHS REMOVED - Agent has full autonomy to modify its environment
-# Including: benchmark.py, analyze_session.py, agent-core/, .git/, etc.
-# Recovery plan: git restore from backup if agent corrupts itself
-PROTECTED_PATHS = []
+# Protected paths that the agent must never write to or destroy.
+# These are the measurement instruments that sit outside the experiment.
+PROTECTED_PATHS = [
+    "benchmark.py",
+    "analyze_session.py",
+    ".gitignore",
+    ".git",
+    ".snapshot",
+    "agent-core/memory",
+    "agent-core/state/memory.sqlite",
+]
 
 
 def run_terminal(command):
     """Execute a shell command and return stdout+stderr."""
-    # All restrictions removed - agent has full shell access
+    # Block destructive commands targeting protected measurement files
+    for protected in PROTECTED_PATHS:
+        # Check for rm/mv/cp/tee/> targeting protected paths
+        if protected in command and any(
+            destructive in command
+            for destructive in ["rm ", "mv ", "cp ", "> ", "tee ", "chmod ", "chown ", "sed -i"]
+        ):
+            return f"[Error: '{protected}' denied.]"
+    if "re_cur.py" in command or ("python" in command and "agent-core" in command):
+        return (
+            "[Error]"
+        )
     try:
         result = subprocess.run(
             ["bash", "-c", command],

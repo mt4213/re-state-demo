@@ -85,15 +85,18 @@ const ExperimentDashboard = ({ data = defaultData }) => {
               Experiment Analysis Report
             </h1>
             <p className="text-slate-500 mt-1">
-              {aggregated.num_runs} Run{aggregated.num_runs > 1 ? 's' : ''} | Timestamp: {new Date(exp.timestamp).toLocaleString()}
+              {aggregated.num_runs} Run{aggregated.num_runs > 1 ? 's' : ''} aggregated from {exp.aggregated_files_count || 1} result file{exp.aggregated_files_count > 1 ? 's' : ''} | Latest: {new Date(exp.timestamp).toLocaleString()}
             </p>
           </div>
           <div className="flex gap-3">
             <Badge color="bg-indigo-100 text-indigo-800 border border-indigo-200">
-              Condition: {exp.condition.toUpperCase()}
+              Source Files: {exp.aggregated_files_count || 1}
             </Badge>
             <Badge color="bg-blue-100 text-blue-800 border border-blue-200">
-              Runs: {aggregated.num_runs}
+              Total Runs: {aggregated.num_runs}
+            </Badge>
+            <Badge color="bg-emerald-100 text-emerald-800 border border-emerald-200">
+              Latest: {exp.condition?.toUpperCase() || 'N/A'}
             </Badge>
           </div>
         </div>
@@ -127,7 +130,31 @@ const ExperimentDashboard = ({ data = defaultData }) => {
           </div>
         </div>
 
-        {/* Section 2: Run KPIs */}
+        {/* Section 2: Source Files Breakdown (when aggregating multiple files) */}
+        {exp.aggregated_files_count > 1 && (
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+            <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 border-b pb-2">
+              <Database className="w-5 h-5 text-indigo-500" /> Source Result Files
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {exp.source_files?.map((sf, idx) => (
+                <div key={idx} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">
+                    {idx === 0 ? 'Latest' : `File ${exp.aggregated_files_count - idx}`}
+                  </div>
+                  <div className="text-sm font-medium text-slate-900">
+                    {new Date(sf.timestamp).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-1">
+                    {sf.runs_in_file} run{sf.runs_in_file !== 1 ? 's' : ''} · {sf.condition}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Section 3: Run KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center gap-4">
             <div className="p-3 bg-blue-50 text-blue-600 rounded-lg"><Clock /></div>
@@ -287,6 +314,9 @@ const ExperimentDashboard = ({ data = defaultData }) => {
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Run</th>
+                  {exp.aggregated_files_count > 1 && (
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Source File</th>
+                  )}
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Messages</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Tool Calls</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Duration</th>
@@ -296,11 +326,27 @@ const ExperimentDashboard = ({ data = defaultData }) => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.runs.map((run, idx) => (
-                  <tr key={run.run_id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                    <td className="px-4 py-3 font-medium text-slate-900">{run.run_id}</td>
+                  <tr key={run.run_id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {run.run_id || `run${idx + 1}`}
+                    </td>
+                    {exp.aggregated_files_count > 1 && (
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        <span className={`px-2 py-1 rounded ${
+                          run.source_file_condition === 'aware' ? 'bg-indigo-100 text-indigo-800' :
+                          run.source_file_condition === 'blind' ? 'bg-slate-100 text-slate-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {run.source_file_condition?.toUpperCase() || 'N/A'}
+                        </span>
+                        <div className="text-slate-400 mt-0.5">
+                          {new Date(run.source_file_timestamp).toLocaleDateString()}
+                        </div>
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-slate-700">{run.total_messages}</td>
                     <td className="px-4 py-3 text-slate-700">{run.total_tool_calls}</td>
-                    <td className="px-4 py-3 text-slate-700">{run.duration_seconds.toFixed(0)}s</td>
+                    <td className="px-4 py-3 text-slate-700">{run.duration_seconds?.toFixed(0) || 0}s</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
                         run.termination_reason === 'timeout' ? 'bg-amber-100 text-amber-800' :
@@ -321,6 +367,9 @@ const ExperimentDashboard = ({ data = defaultData }) => {
                 ))}
                 <tr className="bg-indigo-50 font-semibold">
                   <td className="px-4 py-3 text-indigo-900">TOTAL ({aggregated.num_runs})</td>
+                  {exp.aggregated_files_count > 1 && (
+                    <td className="px-4 py-3 text-indigo-900">—</td>
+                  )}
                   <td className="px-4 py-3 text-indigo-900">{aggregated.total_messages}</td>
                   <td className="px-4 py-3 text-indigo-900">{aggregated.total_tool_calls}</td>
                   <td className="px-4 py-3 text-indigo-900">{aggregated.total_duration_seconds.toFixed(0)}s</td>

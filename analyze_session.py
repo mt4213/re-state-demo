@@ -396,8 +396,9 @@ def main():
     for i, m in enumerate(messages):
         if isinstance(m, dict):
             txt = _extract_text(m)
-            # These are the actual error injections from re_cur.py
-            if txt and ('No valid tool call detected' in txt or 'truncated mid-generation' in txt):
+            # Only match actual error injections from re_cur.py (format: "[Error: ...]")
+            if txt and txt.strip().startswith('[Error:') and \
+               ('No valid tool call detected' in txt or 'truncated mid-generation' in txt):
                 error_roles.add(m.get('role', 'unknown'))
     
     if len(error_roles) == 1:

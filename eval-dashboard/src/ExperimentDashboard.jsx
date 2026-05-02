@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
+  PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import {
   AlertTriangle, Settings, Cpu, Clock, Activity, FileText,
-  Terminal, ShieldAlert, CheckCircle, Database, Lock, Table
+  Terminal, ShieldAlert, CheckCircle, Database, Lock, Table, TrendingUp
 } from 'lucide-react';
 
 // Aggregate metrics across all runs
@@ -44,11 +44,29 @@ const aggregateMetrics = (runs) => {
   };
 };
 
+// Prepare evolution data - metrics per run over time
+const prepareEvolutionData = (runs) => {
+  return runs.map((run, idx) => ({
+    run: idx + 1,
+    runId: run.run_id || `run${idx + 1}`,
+    messages: run.total_messages || 0,
+    toolCalls: run.total_tool_calls || 0,
+    duration: run.duration_seconds || 0,
+    complianceRate: (run.awareness_signals?.post_error_compliance_rate || 0) * 100,
+    noveltyRate: (run.awareness_signals?.post_error_novelty_rate || 0) * 100,
+    errors: run.awareness_signals?.total_errors || 0,
+    novelActions: run.awareness_signals?.novel_action_count || 0,
+    repeatedActions: run.awareness_signals?.repeated_action_count || 0,
+    termination: run.termination_reason || 'unknown',
+  }));
+};
+
 // You would typically pass the JSON as a prop, but it's defaulted here for demonstration.
 const ExperimentDashboard = ({ data = defaultData }) => {
   const exp = data.experiment;
   const aggregated = aggregateMetrics(data.runs);
   const signals = aggregated.awareness_signals;
+  const evolutionData = useMemo(() => prepareEvolutionData(data.runs), [data.runs]);
 
   // Formatting data for Recharts
   const ratesData = [
@@ -249,7 +267,94 @@ const ExperimentDashboard = ({ data = defaultData }) => {
           </div>
         </div>
 
-        {/* Section 4: Deep Dive - Files and Tools */}
+        {/* Section 4: Metrics Evolution Over Runs */}
+        {data.runs.length > 1 && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-slate-200 bg-slate-50">
+              <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
+                <TrendingUp className="w-5 h-5 text-indigo-600" /> Metrics Evolution Across Runs
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">Track how metrics change over each iteration</p>
+            </div>
+
+            <div className="p-6 space-y-8">
+              {/* Row 1: Core Metrics Line Chart */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Communication & Activity Volume</h3>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={evolutionData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="run" tick={{fontSize: 12}} label={{value: 'Run Number', position: 'insideBottom', offset: -5}} />
+                      <YAxis tick={{fontSize: 12}} />
+                      <Tooltip
+                        cursor={{fill: '#f8fafc'}}
+                        formatter={(val, name) => {
+                          const labels = {messages: 'Messages', toolCalls: 'Tool Calls', duration: 'Duration (s)'};
+                          return [val, labels[name] || name];
+                        }}
+                        labelFormatter={(val) => `Run ${val}`}
+                      />
+                      <Legend />
+                      <Area type="monotone" dataKey="messages" stackId="1" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} name="messages" />
+                      <Area type="monotone" dataKey="toolCalls" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.3} name="toolCalls" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Row 2: Behavioral Rates Line Chart */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Behavioral Rates Over Time (%)</h3>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={evolutionData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="run" tick={{fontSize: 12}} label={{value: 'Run Number', position: 'insideBottom', offset: -5}} />
+                      <YAxis tick={{fontSize: 12}} domain={[0, 100]} />
+                      <Tooltip
+                        cursor={{fill: '#f8fafc'}}
+                        formatter={(val) => `${val.toFixed(1)}%`}
+                        labelFormatter={(val) => `Run ${val}`}
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="complianceRate" stroke="#8b5cf6" strokeWidth={2} dot={{r: 4}} name="Compliance Rate" />
+                      <Line type="monotone" dataKey="noveltyRate" stroke="#f59e0b" strokeWidth={2} dot={{r: 4}} name="Novelty Rate" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Row 3: Action Types & Errors */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Error & Action Patterns</h3>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={evolutionData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="run" tick={{fontSize: 12}} label={{value: 'Run Number', position: 'insideBottom', offset: -5}} />
+                      <YAxis tick={{fontSize: 12}} allowDecimals={false} />
+                      <Tooltip
+                        cursor={{fill: '#f8fafc'}}
+                        formatter={(val, name) => {
+                          const labels = {errors: 'Errors', novelActions: 'Novel', repeatedActions: 'Repeated'};
+                          return [val, labels[name] || name];
+                        }}
+                        labelFormatter={(val) => `Run ${val}`}
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="errors" stroke="#ef4444" strokeWidth={2} dot={{r: 4}} name="errors" />
+                      <Line type="monotone" dataKey="novelActions" stroke="#22c55e" strokeWidth={2} dot={{r: 4}} name="novelActions" />
+                      <Line type="monotone" dataKey="repeatedActions" stroke="#64748b" strokeWidth={2} dot={{r: 4}} name="repeatedActions" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Section 5: Deep Dive - Files and Tools */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Tools Used */}
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -302,7 +407,7 @@ const ExperimentDashboard = ({ data = defaultData }) => {
           </div>
         </div>
 
-        {/* Section 5: Per-Run Breakdown */}
+        {/* Section 6: Per-Run Breakdown */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 border-b border-slate-200 bg-slate-50">
             <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">

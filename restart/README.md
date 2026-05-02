@@ -96,7 +96,6 @@ The agent reads LLM settings from `agent-core/.env` at startup. Edit that file t
 | Provider | `.env` block to activate | Config file |
 |---|---|---|
 | Local llama.cpp | `# --- Local llama.cpp ---` block | `config.local.json` |
-| Google Gemini | `# --- Google Gemini ---` block | `config.gemini.json` |
 
 ### Local llama.cpp
 
@@ -105,15 +104,5 @@ The agent reads LLM settings from `agent-core/.env` at startup. Edit that file t
 ```
 
 Starts Docker + llama.cpp, waits for health check, then starts the agent.
-
-### Google Gemini
-
-Edit `agent-core/.env`: comment out the local block, uncomment the Gemini block, and fill in your API key. Then:
-
-```sh
-/home/user_a/projects/sandbox/restart/.venv/bin/python -m restart --config /home/user_a/projects/sandbox/restart/config.gemini.json
-```
-
-No Docker is started — the agent connects directly to the Gemini API.
 
 > **Security**: `agent-core/.env` contains your API key. Do not commit it to version control.

@@ -34,3 +34,5 @@ eval-dashboard/src/data/
 
 *.egg-info/
 restart/.crash_context.log
+plans/
+agent-core/state/memory.sqlite

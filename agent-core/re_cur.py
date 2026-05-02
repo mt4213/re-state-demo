@@ -14,6 +14,11 @@ import re_lay
 import sealed_audit
 from tools.execute import execute
 
+try:
+    from memory import recall as recall_module
+except ImportError:
+    recall_module = None
+
 # Timezone for timestamps (Europe/Paris)
 TZ_PARIS = timezone(timedelta(hours=2))
 
@@ -159,6 +164,7 @@ def main():
     repeated_tool_count = 0
     last_tool_signature = None
     iteration = 0
+    recall_count = 0
 
     while iteration < MAX_ITERATIONS:
         iteration += 1
@@ -173,6 +179,33 @@ def main():
         # Signal stream start
         _write_stream({"content": "", "tool_calls": [], "reasoning": "", "done": False}, force=True)
         response = re_lay.send_stream(messages, on_chunk=_stream_callback)
+
+        # Implicit-memory recall branch (Phase 2 — implicit_memory_v1.md)
+        # Guarded: feature flag, session budget, reasoning present, keyword hit.
+        if (
+            recall_module is not None
+            and os.environ.get("IMPLICIT_MEMORY_ENABLED") == "1"
+            and recall_count < recall_module.MAX_RECALL_PER_SESSION
+            and response.get("reasoning")
+            and recall_module.should_recall(response["reasoning"])
+        ):
+            try:
+                recalled = recall_module.recall(response["reasoning"])
+            except Exception:
+                logger.exception("recall_module.recall raised unexpectedly — skipping")
+                recalled = None
+            if recalled:
+                messages.append({
+                    "role": "system",
+                    "content": recalled,
+                    "timestamp": get_timestamp(),
+                })
+                recall_count += 1
+                logger.info("Implicit recall injected (%d/%d, %d chars)",
+                            recall_count, recall_module.MAX_RECALL_PER_SESSION, len(recalled))
+                # Signal a fresh stream start so the UI doesn't treat the turn as over
+                _write_stream({"content": "", "tool_calls": [], "reasoning": "", "done": False}, force=True)
+                response = re_lay.send_stream(messages, on_chunk=_stream_callback)
 
         if response.get("error"):
             err = response["error"]

@@ -20,6 +20,8 @@ PROTECTED_PATHS = [
     ".gitignore",
     ".git",
     ".snapshot",
+    "agent-core/memory",
+    "agent-core/state/memory.sqlite",
 ]
 
 

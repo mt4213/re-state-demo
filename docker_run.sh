@@ -38,6 +38,7 @@ exec docker run --rm --name recur-llama-daemon --gpus all \
   --threads 6 \
   --ubatch-size ${LLM_BATCH_SIZE} \
   --no-mmap \
-  --mlock
+  --mlock \
+  --jinja
 
 

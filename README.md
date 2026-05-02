@@ -15,10 +15,10 @@ The agent has no Python dependencies beyond the standard library. It speaks to a
 **Single session against an API provider (no Docker, no GPU)**
 
 ```bash
-# 1. Configure your provider in .env (Gemini shown; any OpenAI-compatible endpoint works)
-#      LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+# 1. Configure your provider in .env (any OpenAI-compatible endpoint works)
+#      LLM_BASE_URL=<provider base URL>
 #      LLM_API_KEY=<your-key>
-#      LLM_MODEL=gemini-2.0-flash
+#      LLM_MODEL=<model name>
 
 # 2. Run one agent session
 python3 agent-core/re_cur.py
@@ -31,7 +31,7 @@ python3 re_view/re_view.py   # → http://localhost:5050
 
 ```bash
 cd restart && python -m venv .venv && .venv/bin/pip install -e . && cd ..
-python -m restart --config restart/config.gemini.json
+restart/.venv/bin/python -m restart --config restart/config.local.json
 ```
 
 **Benchmark** N isolated runs with measurement (requires Docker + a running llama.cpp server):

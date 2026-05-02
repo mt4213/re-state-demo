@@ -1,0 +1,14 @@
+[Unit]
+Description=Restart daemon for agent.py and Docker model server
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user_a/projects/sandbox/restart
+Environment=PATH=/home/user_a/projects/sandbox/restart/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/user_a/projects/sandbox/restart/.venv/bin/python -m restart --config /home/user_a/projects/sandbox/restart/config.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

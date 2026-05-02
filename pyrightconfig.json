@@ -1,0 +1,39 @@
+{
+  "include": [
+    "agent-core",
+    "restart/src",
+    "benchmark.py",
+    "analyze_session.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.*",
+    "restart/src/restart.egg-info",
+    "agent-core/.venv",
+    "agent-core/.venv/**"
+  ],
+  "reportOptionalIterable": false,
+  "reportArgumentType": false,
+  "venvPath": ".",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportGeneralTypeIssues": false,
+  "reportUnknownMemberType": false,
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false,
+  "reportUntypedClassAnnotations": "none",
+  "reportUntypedFunctionAnnotations": "none",
+  "reportPrivateImportUsage": false,
+  "reportConstantRedefinition": false,
+  "reportFunctionReturnType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownArgumentType": false,
+  "reportInvalid-string-escape": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalSubscript": false,
+  "reportAttributeAccessIssue": false,
+  "strictDictionaryLiterals": false,
+  "enableTypeIgnoreComments": true,
+  "pythonPlatform": "Linux"
+}

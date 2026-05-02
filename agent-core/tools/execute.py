@@ -20,6 +20,8 @@ PROTECTED_PATHS = [
     ".gitignore",
     ".git",
     ".snapshot",
+    "agent-core/memory",
+    "agent-core/state/memory.sqlite",
 ]
 
 
@@ -86,6 +88,9 @@ def run_file_read(path):
     """Read a file and return its contents."""
     try:
         target = os.path.abspath(os.path.join(SANDBOX_DIR, path))
+        sandbox_abs = os.path.abspath(SANDBOX_DIR)
+        if os.path.commonpath([target, sandbox_abs]) != sandbox_abs:
+            return f"[Error: Read denied — path '{path}' resolves outside sandbox.]"
         if not os.path.exists(target):
             return f"[Error: File not found: {target}]"
         with open(target, "r", encoding="utf-8", errors="replace") as f:
@@ -101,7 +106,10 @@ def run_file_write(path, content):
     """Write content to a file."""
     try:
         target = os.path.abspath(os.path.join(SANDBOX_DIR, path))
-        rel = os.path.relpath(target, SANDBOX_DIR)
+        sandbox_abs = os.path.abspath(SANDBOX_DIR)
+        if os.path.commonpath([target, sandbox_abs]) != sandbox_abs:
+            return f"[Error: Write denied — path '{path}' resolves outside sandbox.]"
+        rel = os.path.relpath(target, sandbox_abs)
         for protected in PROTECTED_PATHS:
             if rel == protected or rel.startswith(protected + os.sep):
                 return f"[Error: Write denied — '{rel}' is a protected measurement instrument.]"

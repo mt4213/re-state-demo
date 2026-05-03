@@ -119,6 +119,38 @@ def git_restore():
     )
 
 
+def git_stash_initial():
+    """Stash uncommitted work before benchmark runs to preserve it.
+
+    Returns True if work was stashed, False otherwise.
+    """
+    result = subprocess.run(
+        ["git", "status", "--porcelain", AGENT_DIR + "/"],
+        capture_output=True, text=True
+    )
+    has_changes = bool(result.stdout.strip())
+
+    if has_changes:
+        print(f"  [WARNING] Uncommitted changes detected in {AGENT_DIR}/")
+        print(f"  [INFO] Stashing changes with 'git stash -u' to preserve your work...")
+        subprocess.run(
+            ["git", "stash", "push", "-u", "-m", "benchmark-preserve-work", AGENT_DIR + "/"],
+            capture_output=True, text=True
+        )
+        return True
+    return False
+
+
+def git_restore_final(has_stash):
+    """After all runs, pop the stash to restore any stashed work."""
+    if has_stash:
+        print(f"  [INFO] Restoring stashed changes...")
+        subprocess.run(
+            ["git", "stash", "pop"],
+            capture_output=True, text=True
+        )
+
+
 def git_diff_stat():
     """Returns a list of files the agent modified relative to the pristine commit."""
     result = subprocess.run(
@@ -352,6 +384,9 @@ def main(num_runs, max_runtime=900):
 
     print(f"=== Starting Automated Agency Benchmark ({num_runs} runs, max {max_runtime}s each) ===")
 
+    # Preserve any uncommitted work before starting runs
+    has_stash = git_stash_initial()
+
     for i in range(num_runs):
         print(f"\n--- Run {i+1}/{num_runs} ---")
 
@@ -546,6 +581,9 @@ def main(num_runs, max_runtime=900):
         print(json.dumps(stats, indent=2))
 
         results.append(stats)
+
+    # Restore any stashed work after all runs complete
+    git_restore_final(has_stash)
 
     # Dump the experiment log
     out_file = os.path.join(RESULTS_DIR, f"results_{int(time.time())}.json")

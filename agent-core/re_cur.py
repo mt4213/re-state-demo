@@ -376,7 +376,7 @@ def main():
 
     logger.info("re_cur stopped after %d turns", iteration)
     persist_state(messages)
-    sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

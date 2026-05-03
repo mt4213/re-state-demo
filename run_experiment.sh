@@ -45,7 +45,7 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
 
 if [ "$STATUS" != "200" ]; then
     echo "[!] LLM Server is offline. Starting..."
-    ./docker_run.sh > /tmp/docker_run.log 2>&1 &
+    ./llama_run.sh > /tmp/llama_run.log 2>&1 &
     DOCKER_PID=$!
 
     # Wait for server to be ready (up to 60 seconds)
@@ -64,7 +64,7 @@ if [ "$STATUS" != "200" ]; then
     FINAL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
     if [ "$FINAL_STATUS" != "200" ]; then
         echo ""
-        echo "[-] LLM Server failed to start. Check /tmp/docker_run.log"
+        echo "[-] LLM Server failed to start. Check /tmp/llama_run.log"
         exit 1
     fi
     echo ""

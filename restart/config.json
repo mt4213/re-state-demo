@@ -1,7 +1,7 @@
 {
   "pre_health_command": {
-    "name": "docker",
-    "command": "bash -c 'docker rm -f recur-llama-daemon 2>/dev/null; exec docker run --rm --name recur-llama-daemon --gpus all -v /home/user_a/llama/models:/models -p 8080:8080 ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_M.gguf --port 8080 --host 0.0.0.0 -c 8042 -n 900 --n-gpu-layers 11 --parallel 1 -ctk q4_1 -ctv q4_1 -fa on --log-disable --defrag-thold 0.1'",
+    "name": "llama-server",
+    "command": "bash -c 'pkill -f llama-server; exec /home/user_a/projects/sandbox/llama_run.sh'",
     "health_url": "http://127.0.0.1:8080/health",
     "health_timeout": 300.0,
     "health_poll_interval": 2.0

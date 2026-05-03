@@ -1,7 +1,7 @@
 {
   "pre_health_command": {
-    "name": "docker",
-    "command": "bash -c 'docker rm -f recur-llama-daemon 2>/dev/null; exec /home/user_a/projects/sandbox/docker_run.sh'",
+    "name": "llama-server",
+    "command": "bash -c 'pkill -f llama-server; exec /home/user_a/projects/sandbox/llama_run.sh'",
     "health_url": "http://127.0.0.1:8080/health",
     "health_timeout": 300.0,
     "health_poll_interval": 2.0

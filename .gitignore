@@ -39,3 +39,4 @@ plans/
 agent-core/state/memory.sqlite
 watchdog/quarantine/
 watchdog/log.jsonl
+watchdog/run.out

@@ -225,6 +225,7 @@ def main():
                         "function": {"name": "terminal", "arguments": "{}"},
                     }],
                     "timestamp": get_timestamp(),
+                    "_synthetic": True,
                 })
                 messages.append({
                     "role": "tool",
@@ -234,6 +235,7 @@ def main():
                         "the JSON tool call was incomplete.]"
                     ),
                     "timestamp": get_timestamp(),
+                    "_synthetic": True,
                 })
                 persist_state(messages)
                 _write_stream({"done": True}, force=True)
@@ -353,12 +355,14 @@ def main():
                         "function": {"name": "terminal", "arguments": "{}"},
                     }],
                     "timestamp": get_timestamp(),
+                    "_synthetic": True,
                 })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": err_id,
                     "content": "[Error: No valid tool call detected.]",
                     "timestamp": get_timestamp(),
+                    "_synthetic": True,
                 })
             else:
                 messages.append({

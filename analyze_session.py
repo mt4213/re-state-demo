@@ -58,13 +58,19 @@ def main():
                     return t
         return ""
 
-    # Identify synthetic injected messages produced by re_cur when error_inject_role="tool":
-    # an assistant message with content=None and a single no-arg terminal call immediately
-    # followed by an error tool message. These are scaffolding, not real agent actions.
+    # Identify synthetic injected messages produced by re_cur when error_inject_role="tool".
+    # These messages are explicitly marked with _synthetic=True by re_cur.py.
+    # Fallback to heuristic detection for older runs without the flag.
     synthetic_assistant_indices = set()
     for i, m in enumerate(messages):
         if not isinstance(m, dict) or m.get('role') != 'assistant':
             continue
+        # Use explicit flag if available
+        if m.get('_synthetic') is True:
+            synthetic_assistant_indices.add(i)
+            continue
+        # Fallback heuristic for older runs: assistant message with content=None,
+        # single no-arg terminal call, immediately followed by an error tool message
         if m.get('content') is not None:
             continue
         tcs = m.get('tool_calls') or []

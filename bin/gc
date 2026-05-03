@@ -1,0 +1,10 @@
+#!/bin/bash
+# Quick commit: status → add → commit with optional message
+git status --short
+echo ""
+git add -A
+if [ -n "$1" ]; then
+    git commit -m "$1"
+else
+    git commit -m "wip: $(date +%H:%M)"
+fi

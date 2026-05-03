@@ -1,0 +1,4 @@
+#!/bin/bash
+# Open re_view results viewer from any directory
+cd /home/user_a/projects/sandbox/re_view
+python3 re_view.py

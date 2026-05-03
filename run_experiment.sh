@@ -44,12 +44,33 @@ echo "---------------------------------------------"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
 
 if [ "$STATUS" != "200" ]; then
-    echo "[!] LLM Server is offline."
-    echo "Please start the LLM server manually, then run this script again."
-    exit 1
-fi
+    echo "[!] LLM Server is offline. Starting..."
+    ./docker_run.sh > /tmp/docker_run.log 2>&1 &
+    DOCKER_PID=$!
 
-echo "[+] LLM Server is ONLINE."
+    # Wait for server to be ready (up to 60 seconds)
+    echo "[*] Waiting for LLM server (max 60s)..."
+    for i in {1..30}; do
+        sleep 2
+        HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
+        if [ "$HEALTH" = "200" ]; then
+            echo "[+] LLM Server is ONLINE."
+            break
+        fi
+        echo -n "."
+    done
+
+    # Final check
+    FINAL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
+    if [ "$FINAL_STATUS" != "200" ]; then
+        echo ""
+        echo "[-] LLM Server failed to start. Check /tmp/docker_run.log"
+        exit 1
+    fi
+    echo ""
+else
+    echo "[+] LLM Server is ONLINE."
+fi
 echo ""
 echo "Initiating $RUNS run(s)..."
 python3 benchmark.py --runs $RUNS

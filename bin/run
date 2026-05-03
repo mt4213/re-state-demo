@@ -1,0 +1,4 @@
+#!/bin/bash
+# Full workflow: ensure server → run experiment → view results
+cd /home/user_a/projects/sandbox
+./run_experiment.sh ${1:-1} && ./bin/see

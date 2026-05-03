@@ -1,5 +1,5 @@
 [Unit]
-Description=Restart daemon for agent.py and Docker model server
+Description=Restart daemon for agent.py (use config.local.json for full Docker + agent supervision)
 After=network.target docker.service
 
 [Service]

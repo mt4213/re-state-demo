@@ -26,6 +26,7 @@ agent-core/state/stream.json
 
 workspace/
 .clinerules/
+restart/config.local.json
 
 CLAUDE.md
 .claude

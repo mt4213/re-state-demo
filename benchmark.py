@@ -221,6 +221,12 @@ def collect_experiment_metadata():
                         metadata["independent_variables"]["model"] = val
                     elif line.startswith("ERROR_INJECT_ROLE="):
                         metadata["independent_variables"]["error_inject_role"] = line.strip().split("=", 1)[1].lower()
+                    elif line.startswith("LLM_TEMPERATURE="):
+                        val = line.strip().split("=", 1)[1]
+                        try:
+                            metadata["independent_variables"]["temperature"] = float(val)
+                        except ValueError:
+                            pass
                     elif line.startswith("LLM_MAX_TOKENS="):
                         val = line.strip().split("=", 1)[1]
                         try:
@@ -263,16 +269,21 @@ def collect_experiment_metadata():
     except Exception:
         pass
 
+    # Fallback: parse re_lay.py only if values not found in .env
+    # This is brittle but provides backwards compatibility
     try:
         if os.path.exists("agent-core/re_lay.py"):
             with open("agent-core/re_lay.py", "r") as f:
                 content = f.read()
-                temp_match = re.search(r'"temperature"\s*:\s*([0-9.]+)', content)
-                if temp_match:
-                    try:
-                        metadata["independent_variables"]["temperature"] = float(temp_match.group(1))
-                    except ValueError:
-                        pass
+                # Only parse temperature if not already set from .env
+                if metadata["independent_variables"]["temperature"] is None:
+                    temp_match = re.search(r'"temperature"\s*:\s*([0-9.]+)', content)
+                    if temp_match:
+                        try:
+                            metadata["independent_variables"]["temperature"] = float(temp_match.group(1))
+                        except ValueError:
+                            pass
+                # Only parse max_tokens if not already set from .env
                 
                 if metadata["independent_variables"]["max_tokens"] is None:
                     mt_match = re.search(r'DEFAULT_MAX_TOKENS\s*=\s*(\d+)', content)

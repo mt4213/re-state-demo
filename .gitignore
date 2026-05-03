@@ -36,3 +36,4 @@ eval-dashboard/src/data/
 restart/.crash_context.log
 plans/
 agent-core/state/memory.sqlite
+watchdog/quarantine/

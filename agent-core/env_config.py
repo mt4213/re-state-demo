@@ -31,6 +31,9 @@ def load_env():
                 key, _, value = line.partition("=")
                 # Strip inline comments (e.g. "# comment" after value)
                 value = value.split("#")[0].strip()
+                # Strip shell-style quoting (single or double) so SYSTEM_PROMPT='...' works
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
                 os.environ.setdefault(key.strip(), value)
     
     _loaded = True

@@ -80,6 +80,8 @@ MAX_HISTORY_CHARS = 25000
 MAX_ITERATIONS = 100
 
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "")
+if not SYSTEM_PROMPT.strip():
+    logger.warning("SYSTEM_PROMPT is empty — agent will run with no directive")
 
 def estimate_chars(messages):
     """Rough character count of the messages array."""

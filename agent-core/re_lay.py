@@ -17,6 +17,7 @@ logger = logging.getLogger("re_lay")
 DEFAULT_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
 DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 DEFAULT_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
+DEFAULT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 
 # Tool definitions for the LLM (OpenAI function-calling format)
 TOOLS = [
@@ -138,7 +139,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
         "model": model,
         "messages": clean_messages,
         "max_tokens": max_tokens,
-        "temperature": 0.7,
+        "temperature": float(os.getenv("LLM_TEMPERATURE", str(DEFAULT_TEMPERATURE))),
         "stream": True,
     }
     if tools:
@@ -228,7 +229,7 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
         "model": model,
         "messages": clean_messages,
         "max_tokens": max_tokens,
-        "temperature": 0.7,
+        "temperature": float(os.getenv("LLM_TEMPERATURE", str(DEFAULT_TEMPERATURE))),
     }
     if tools:
         payload["tools"] = tools

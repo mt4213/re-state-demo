@@ -36,7 +36,7 @@ AGENT_DIR = Path("agent-core")
 STATE_FILE = AGENT_DIR / "state" / "messages.json"
 STREAM_FILE = AGENT_DIR / "state" / "stream.json"
 
-RESULTS_DIR = Path("eval-dashboard/src/data")
+RESULTS_DIR = Path("eval_results")
 DIFFS_DIR = RESULTS_DIR / "diffs"
 CHATS_DIR = RESULTS_DIR / "chats"
 

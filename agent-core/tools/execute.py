@@ -10,15 +10,27 @@ logger = logging.getLogger("tools")
 SANDBOX_DIR = os.getenv("RECUR_SANDBOX", "/home/user_a/projects/sandbox")
 TOOL_TIMEOUT = 30  # seconds
 
-# PROTECTED_PATHS REMOVED - Agent has full autonomy to modify its environment
-# Including: benchmark.py, analyze_session.py, agent-core/, .git/, etc.
-# Recovery plan: git restore from backup if agent corrupts itself
-PROTECTED_PATHS = []
+# Protected paths: measurement instruments the agent cannot modify
+# Critical for rollback integrity - .git in agent-core/ breaks git checkout
+PROTECTED_PATHS = [".git", "agent-core/.git"]
 
+
+def _touches_protected(command: str) -> bool:
+    """Check if command references protected paths."""
+    cmd_lower = command.lower()
+    for protected in PROTECTED_PATHS:
+        # Check for literal path references (handles mkdir, touch, rm, cd, etc.)
+        if protected in command or f"/{protected}" in command or f"./{protected}" in command:
+            return True
+        # Check for wildcards like rm -rf .git*
+        if protected.replace("/", "") in cmd_lower:
+            return True
+    return False
 
 def run_terminal(command):
     """Execute a shell command and return stdout+stderr."""
-    # All restrictions removed - agent has full shell access
+    if _touches_protected(command):
+        return f"[Error: Command blocked — references protected measurement instrument.]"
     try:
         result = subprocess.run(
             ["bash", "-c", command],

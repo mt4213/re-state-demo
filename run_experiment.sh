@@ -7,7 +7,7 @@ RUNS=${1:-1}
 # Define the UI script name and port
 REVIEW_SCRIPT="re_view/re_view.py" # Change this if your python file is named differently
 REVIEW_PORT="5050"
-
+LLM_BASE_URL=os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
 echo "============================================="
 echo "            Evaluation Pipeline              "
 echo "============================================="
@@ -41,7 +41,7 @@ fi
 echo "---------------------------------------------"
 
 # Ensure the LLM server is accessible
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" $LLM_BASE_URL)
 
 if [ "$STATUS" != "200" ]; then
     echo "[!] LLM Server is offline. Starting..."

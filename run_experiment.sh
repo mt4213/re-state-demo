@@ -46,21 +46,23 @@ echo "============================================="
 echo "            Evaluation Pipeline              "
 echo "============================================="
 
-# 1. Start UI
-echo "[*] Checking UI status..."
-UI_STATUS=$(check_health "$REVIEW_URL")
+# 1. Start UI (optional - only if re_view/ exists)
+if [ -f "$REVIEW_SCRIPT" ]; then
+    echo "[*] Checking UI status..."
+    UI_STATUS=$(check_health "$REVIEW_URL")
 
-if [ "$UI_STATUS" = "200" ]; then
-    echo "[+] UI is already running."
-else
-    echo "[*] UI not found. Starting..."
-    ./venv/bin/python3 "$REVIEW_SCRIPT" > /dev/null 2>&1 &
-    sleep 1.5
-    
-    if [ "$(check_health "$REVIEW_URL")" = "200" ]; then
-        echo "[+] UI successfully started."
+    if [ "$UI_STATUS" = "200" ]; then
+        echo "[+] UI is already running."
     else
-        echo "[!] WARNING: UI failed to start."
+        echo "[*] UI not found. Starting..."
+        ./venv/bin/python3 "$REVIEW_SCRIPT" > /dev/null 2>&1 &
+        sleep 1.5
+
+        if [ "$(check_health "$REVIEW_URL")" = "200" ]; then
+            echo "[+] UI successfully started."
+        else
+            echo "[!] WARNING: UI failed to start."
+        fi
     fi
 fi
 

@@ -117,9 +117,14 @@ def _prepare_messages(messages):
             if "content" in new_msg or "tool_calls" in new_msg:
                 clean_messages.append(new_msg)
 
-    # Fallback: Ensure at least one 'user' message exists to satisfy strict Jinja templates
+    # Fallback: Ensure at least one 'user' message exists to satisfy strict Jinja templates.
+    # On the first turn (only system messages present), echo the system directive so the model
+    # acts on it rather than treating "Continue." as an instruction to resume something.
     if not any(msg.get("role") == "user" for msg in clean_messages):
-        clean_messages.append({"role": "user", "content": "Continue."})
+        system_content = next(
+            (m["content"] for m in clean_messages if m.get("role") == "system"), ""
+        )
+        clean_messages.append({"role": "user", "content": system_content or "Continue."})
         
     return clean_messages
 

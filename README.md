@@ -54,7 +54,64 @@ Existing evaluations of LLM agents are predominantly short-horizon and task-spec
 
 A guiding constraint of the project is that agent self-report is treated as unreliable (Anti-Placebo Verification). Behavioral shifts are inferred from observable changes in autonomous tool use in response to controlled environmental perturbations, rather than from introspective output.
 
+## Foundational Model
+
+`S_0 = (A, f)`. A set of agents and an interaction function. No pre-defined structure. Memory, institutions, and habits emerge from iterated interaction.
+
+Start with agents and a rule for interaction. Run it. Let memory crystallize from use.
+
+## Hardware Constraints
+
+RTX 2070 = 8GB VRAM. This is the ceiling, not a target.
+
+| Model size | VRAM (Q4) | Feasibility |
+|---|---|---|
+| 7B | ~4-5GB | Comfortable |
+| 14B | ~8-10GB | Borderline |
+| 27B+ | 15GB+ | GPU alone: no. CPU offload: slow but possible |
+
+**Consequence**: The reasoning LLM is a 7B-class model (or MoE with low active params like Qwen3-A3B or Zaya 8B MoE with 0.7B active). It does not carry world knowledge in weights. It processes retrieved context. This is not a compromise — it is the correct architecture for a system where knowledge lives in external stores.
+
 ## Architecture
+
+### Two Pipelines, Not One
+
+The system separates **memory improvement** from **capability improvement**:
+
+#### Memory Pipeline (Nightly / Per-Session)
+Episodic. Processes session logs into retrievable memories. Components that get fine-tuned here improve *retrieval quality* and *compression faithfulness*.
+
+```
+Raw session JSONL (ground truth, immutable)
+    |
+    v
+Summarizer (small fine-tuned model) --> compressed memory entry
+    |
+    v
+Validator (deterministic + semantic)
+    |
+    v
+Embedding model (fine-tuned periodically) --> vectors
+    |
+    v
+SQLite vector store (memory.sqlite)
+```
+
+#### Capability Pipeline (Rare / Deliberate)
+The reasoning LLM gets better at *doing things*, not at *remembering things*. This pipeline runs infrequently.
+
+```
+Accumulate cases where reasoning failed or succeeded
+    |
+    v
+Either: fine-tune reasoning model on (task, correct_action) pairs
+Or: swap in a better base model when one is released
+    |
+    v
+Run evals to confirm improvement before deploying
+```
+
+These pipelines are orthogonal. Memory improving does not require reasoning improving, and vice versa.
 
 ### Core Loop (`agent-core/`)
 
@@ -69,10 +126,19 @@ The agent is a four-module ContReAct loop. Each module is a single file.
 | `sealed_audit.py` | Append-only audit log written to `eval_results/chats/sealed_audit_*.jsonl`. Not mounted into agent's container for tamper-proofing. |
 | `env_config.py` | Loads `.env` from project root at import time. |
 
+### Memory System (`agent-core/memory/`)
+
+| Component | Role | Fine-tunable? | Hardware Budget |
+|---|---|---|---|
+| `vector_store.py` | SQLite + brute-force cosine similarity search | N/A | CPU + disk |
+| `embed.py` | Text → 384d vectors (all-MiniLM-L6-v2) | Yes, periodically on retrieval pairs | ~200MB VRAM |
+| `recall.py` | Keyword-gated retrieval with similarity threshold | N/A (rule-based; will upgrade to memory manager) | CPU only |
+
 ### State Files (`agent-core/state/`)
 
 - `messages.json` — canonical conversation history (persisted each turn; wiped between benchmark runs)
 - `stream.json` — live streaming buffer (~20 writes/sec), consumed by `re_view`
+- `memory.sqlite` — vector store for episodic memories (if `IMPLICIT_MEMORY_ENABLED=1`)
 
 ### Benchmark Harness (`benchmark.py`)
 
@@ -87,10 +153,21 @@ For each run, `benchmark.py`:
 
 ### Supporting Services
 
-- **`restart/`** — Generic supervisor daemon. Runs a pre-health command (Docker llama.cpp), polls `/health`, then starts post-health command (agent), restarting with exponential backoff on failure.
+- **`restart/`** — Generic supervisor daemon. Runs a pre-health command (native llama-server), polls `/health`, then starts post-health command (agent), restarting with exponential backoff on failure.
 - **`re_view/re_view.py`** — HTTP server on `:5050` rendering `messages.json` + `stream.json` as live conversation UI.
 - **`eval-dashboard/`** — React-based dashboard for viewing aggregated experiment results across all runs.
 - **`agent-core/memory/`** — Implicit memory system with SQLite vector store, ingest pipeline, and recall hook (optional, controlled by `IMPLICIT_MEMORY_ENABLED`).
+
+### VRAM Budget (Concurrent Worst Case)
+
+| Component | VRAM |
+|---|---|
+| Reasoning LLM (7B Q4) | ~4.5GB |
+| Embedding model (MiniLM) | ~0.2GB |
+| OS + CUDA overhead | ~0.8GB |
+| **Total runtime** | **~5.5GB / 8GB** |
+
+Sleep cycle components (summarizer, semantic validator) can share the reasoning LLM's slot or run on CPU. They do not need to run concurrently with the reasoning LLM.
 
 ## Configuration
 
@@ -126,16 +203,56 @@ The framework is designed to support investigation of:
 - What perturbation classes produce the most diagnostically useful behavioral signatures?
 - How can we distinguish genuine belief-updating from behavioral mimicry without relying on self-report?
 
-## Roadmap
+## Why Fine-Tuning is NOT Used for Episodic Storage
+
+Gradient descent averages and generalizes. It learns habits, not episodes. You cannot reliably encode "on Tuesday at 3pm I ran chmod on /etc/systemd" into weights. The mechanism does not fit the data type:
+
+- **Episodic memories are unique, one-shot events.** Weights learn from repetition.
+- **Fine-tuning on new episodes causes catastrophic forgetting** of older ones.
+- **Nightly fine-tuning is computationally expensive** and introduces instability each cycle.
+
+Fine-tuning has power in this system — just not AS the storage medium. It improves the intelligence AROUND the storage: better retrieval relevance (embedding model), better compression (summarizer), better triage (memory manager).
+
+## Implementation Phases
+
+### Milestone 1: Working Agent with Memory Retrieval (Phases 1-3)
+
+- **[Phase 1] Session logging** — Extend `sealed_audit.py` to capture every action, tool call, error, and response with timestamps in structured JSONL format (ground truth, immutable).
+- **[Phase 2] Vector store + embedding** — Extend `vector_store.py` with chunking strategy (per task block → per tool call fallback), metadata (tools_used, files_touched, origin, validated), and optional ANN index for >10k rows.
+- **[Phase 3] Runtime retrieval** — Extend `recall.py` to embed context, query vector DB for top-k memories (k=3-5), filter by origin (live > bootstrap), and inject as system prompt notes with 2000-token budget.
+
+### Milestone 2: Reliable Memory Pipeline (Phases 4-5)
+
+- **[Phase 4] Sleep cycle: summarization** — Build periodic job to compress raw logs into memory entries via small fine-tuned summarizer model. Summary is search index; raw log remains source of truth.
+- **[Phase 5] Sleep cycle: validation** — Three-layer validation gate:
+  - L1: Deterministic checks (grep tool names, paths, errors, counts)
+  - L2: Semantic validation (different model arch from summarizer)
+  - L3: Decision (approve / reject / strip unverifiable claims)
+
+### Milestone 3: Cold Start Solution (Phase 0)
+
+- **[Phase 0] Genesis** — Build two agents (task-poser + executor) to generate realistic tasks and seed memory system with 20-50 bootstrap memories covering common tool patterns. Bootstrap memories deprioritized at retrieval and pruned once sufficient live memories exist.
+
+### Milestone 4: Self-Improving Memory (Phases 6-7)
+
+- **[Phase 6] Embedding model fine-tuning** — Collect retrieval pairs (positive: used and succeeded; negative: retrieved but ignored), periodically fine-tune embedding model, A/B test before deployment.
+- **[Phase 7] Memory lifecycle** — Implement decay (unretrieved memories lose relevance), consolidation (merge related sessions into higher-level summaries), pruning (bootstrap culling), and linking (cross-reference via shared files/session_ids).
+
+## Current Roadmap Status
 
 - [x] Core ContReAct loop implementation
 - [x] Benchmark harness with isolated Docker runs
 - [x] Sealed audit log for tamper-proofing
-- [x] Implicit memory with vector store and recall
+- [x] Implicit memory with vector store and recall (Phases 1-3 partial)
 - [x] Evaluation dashboard for results visualization
-- [ ] Perturbation injection API
-- [ ] Reproducible experiment configurations
-- [ ] Open dataset of perturbation-response traces
+- [ ] Phase 1: Complete structured JSONL logging
+- [ ] Phase 2: Complete vector store chunking and metadata
+- [ ] Phase 3: Complete runtime memory retrieval with filtering
+- [ ] Phase 4: Sleep cycle summarization pipeline
+- [ ] Phase 5: Three-layer validation gate
+- [ ] Phase 0: Bootstrap memory generation
+- [ ] Phase 6: Embedding model fine-tuning loop
+- [ ] Phase 7: Memory lifecycle management
 
 ## Project Scope
 

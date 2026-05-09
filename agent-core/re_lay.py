@@ -19,7 +19,7 @@ DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 DEFAULT_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
 
 # Tool definitions for the LLM (OpenAI function-calling format)
-TOOLS =[
+TOOLS = [
     {
         "type": "function",
         "function": {
@@ -62,7 +62,7 @@ TOOLS =[
                     "path": {"type": "string", "description": "Absolute path to the file."},
                     "content": {"type": "string", "description": "The content to write."}
                 },
-                "required":["thought", "path", "content"]
+                "required": ["thought", "path", "content"]
             }
         }
     }
@@ -74,7 +74,7 @@ def _prepare_messages(messages):
     thoughts to preserve context without triggering prefill errors.
     Ensures strict API compatibility for tool-calling formats.
     """
-    clean_messages =[]
+    clean_messages = []
 
     for msg in copy.deepcopy(messages):
         role = msg.get("role", "")
@@ -116,9 +116,9 @@ def _prepare_messages(messages):
             if "content" in new_msg or "tool_calls" in new_msg:
                 clean_messages.append(new_msg)
 
-    # Fallback if history is empty
-    if not clean_messages:
-        clean_messages.append({"role": "user", "content": "."})
+    # Fallback: Ensure at least one 'user' message exists to satisfy strict Jinja templates
+    if not any(msg.get("role") == "user" for msg in clean_messages):
+        clean_messages.append({"role": "user", "content": "Continue."})
         
     return clean_messages
 
@@ -138,7 +138,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
         "model": model,
         "messages": clean_messages,
         "max_tokens": max_tokens,
-        "temperature": 0.7,  # Lowered for more stable reasoning and tool formatting
+        "temperature": 0.7,
         "stream": True,
     }
     if tools:
@@ -249,7 +249,7 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
             return {
                 "content": msg.get("content"),
                 "tool_calls": msg.get("tool_calls"),
-                "reasoning": msg.get("reasoning_content"),  # Capture Qwen-style reasoning
+                "reasoning": msg.get("reasoning_content"), 
                 "error": None,
             }
 

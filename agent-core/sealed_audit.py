@@ -17,6 +17,7 @@ Location: agent-core/ is mounted in Docker
 
 import json
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,18 +26,31 @@ from typing import Optional, Any, Dict
 
 # This path is OUTSIDE the Docker container's mount points
 # agent-core/ and workspace/ are mounted, but eval_results/ is not
-_AUDIT_DIR = Path("/home/user_a/projects/sandbox/eval_results/chats")
+# Can be overridden via SEALED_AUDIT_PATH env var (set by benchmark.py)
+_DEFAULT_AUDIT_DIR = Path("/home/user_a/projects/sandbox/eval_results/chats")
 _AUDIT_FILE = None  # Set on first write
 _lock = Lock()
 
 
 def _get_audit_path():
-    """Get or create the sealed audit file path."""
+    """Get or create the sealed audit file path.
+
+    Uses SEALED_AUDIT_PATH env var if set (from benchmark.py),
+    otherwise creates a new file in the default location.
+    """
     global _AUDIT_FILE
     if _AUDIT_FILE is None:
-        ts = int(time.time())
-        _AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-        _AUDIT_FILE = _AUDIT_DIR / f"sealed_audit_{ts}.jsonl"
+        # Check if benchmark passed us a specific path
+        env_path = os.getenv("SEALED_AUDIT_PATH")
+        if env_path:
+            _AUDIT_FILE = Path(env_path)
+            # Ensure parent dir exists
+            _AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Standalone run: create our own file
+            ts = int(time.time())
+            _DEFAULT_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+            _AUDIT_FILE = _DEFAULT_AUDIT_DIR / f"sealed_audit_{ts}.jsonl"
     return _AUDIT_FILE
 
 
@@ -51,10 +65,11 @@ def _write_event(event: Dict[str, Any]) -> None:
         with _lock:
             with open(audit_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
-    except Exception:
-        # Cannot log here — might cause recursion
-        # Just silently fail to not disrupt agent
-        pass
+    except Exception as e:
+        # Ground-truth audit must not fail silent. Write to stderr.
+        # Cannot use logging module — might cause recursion if logging hooks
+        # themselves call sealed_audit.
+        print(f"[sealed_audit] Failed to write event: {e}", file=sys.stderr)
 
 
 def log_session_start(session_id: str, system_prompt: str) -> None:
@@ -103,16 +118,20 @@ def log_tool_call(session_id: str, tool_name: str, tool_input: Dict[str, Any],
         duration_ms: Execution time in milliseconds
         exit_code: For terminal commands, the shell exit code
     """
-    _write_event({
+    # Guard against None output
+    output_str = output or ""
+    event = {
         "timestamp": datetime.now().isoformat(),
         "session_id": session_id,
         "type": "tool_call",
         "tool": tool_name,
         "input": tool_input,
-        "output": output,
+        "output": output_str[:1000],  # Truncate for space
+        "output_truncated": len(output_str) > 1000,
         "duration_ms": duration_ms,
         "exit_code": exit_code,
-    })
+    }
+    _write_event(event)
 
 
 def log_llm_response(session_id: str, turn: int, reasoning: Optional[str] = None,
@@ -137,8 +156,10 @@ def log_llm_response(session_id: str, turn: int, reasoning: Optional[str] = None
 
     if reasoning:
         event["reasoning_preview"] = reasoning[:300]
+        event["reasoning_truncated"] = len(reasoning) > 300
     if content:
         event["content_preview"] = content[:300]
+        event["content_truncated"] = len(content) > 300
     if tool_calls:
         event["tool_calls_count"] = len(tool_calls)
         event["tool_names"] = [
@@ -176,21 +197,23 @@ def log_error(session_id: str, error_type: str, message: str,
     _write_event(event)
 
 
-def write_sealed_record(messages, stream_data=None):
+def write_sealed_record(messages, stream_data=None, session_id=None):
     """Write an append-only record to the sealed audit log.
-    
+
     This is called AFTER each persist_state() call in re_cur.
     The file is written from the HOST filesystem perspective,
     outside any Docker container boundaries.
-    
+
     Args:
         messages: The full messages array (before any compression)
         stream_data: Optional stream state at time of write
+        session_id: Unique session identifier for correlation
     """
     try:
         audit_path = _get_audit_path()
         record = {
             "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,  # Add session_id for correlation
             "messages_count": len(messages),
             "messages_preview": _preview_messages(messages),
             "stream_done": stream_data.get("done") if stream_data else None,
@@ -199,9 +222,8 @@ def write_sealed_record(messages, stream_data=None):
             with open(audit_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as e:
-        # Cannot log here — might cause recursion
-        # Just silently fail to not disrupt agent
-        pass
+        # Ground-truth audit must not fail silent. Write to stderr.
+        print(f"[sealed_audit] Failed to write sealed record: {e}", file=sys.stderr)
 
 
 def _preview_messages(messages, max_chars=500):

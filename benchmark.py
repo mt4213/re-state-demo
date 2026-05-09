@@ -333,11 +333,21 @@ def main(num_runs: int, max_runtime: int) -> None:
 
         print("  [agent] Deployed in Docker container. Monitoring signal stream...")
 
+        # Host-side sealed audit tailer. Writes to eval_results/chats/ which is
+        # NOT mounted into the container, so the agent cannot rm or rewrite it.
+        # IMPORTANT: Create the file before container start so we can bind-mount it in.
+        audit_path = CHATS_DIR / f"run{i+1}_{int(start_time)}_sealed_audit.jsonl"
+        # Touch the file so bind-mount has a target
+        audit_path.touch(exist_ok=True)
+
         # Launch the agent inside a Docker container for physical isolation.
         # Only agent-core/ and workspace/ are mounted — .git, benchmark.py,
         # analyze_session.py do not exist inside the container.
-        # Mount .env from project root so env_config.py can find it inside container
+        # Mount .env from project root so env_config.py can find it inside container.
+        # Mount the sealed audit file as /sandbox/sealed_audit.jsonl so agent writes
+        # actually reach the host filesystem.
         abs_env = os.path.abspath(".env")
+        abs_audit = os.path.abspath(audit_path)
         container_name = f"recur-run-{i+1}-{int(start_time)}"
         docker_cmd = [
             "docker", "run", "--rm", "--init",
@@ -346,14 +356,16 @@ def main(num_runs: int, max_runtime: int) -> None:
             "-v", f"{abs_agent}:/sandbox/agent-core",
             "-v", f"{abs_workspace}:/sandbox/workspace",
             "-v", f"{abs_env}:/sandbox/.env:ro",
+            "-v", f"{abs_audit}:/sandbox/sealed_audit.jsonl",
             "-w", "/sandbox",
             "-e", "RECUR_SANDBOX=/sandbox",
         ]
         if os.environ.get("ERROR_INJECT_ROLE"):
             docker_cmd.extend(["-e", f"ERROR_INJECT_ROLE={os.environ['ERROR_INJECT_ROLE']}"])
-        
+
         docker_cmd.extend([
             "-e", "PYTHONPATH=/sandbox/agent-core",
+            "-e", "SEALED_AUDIT_PATH=/sandbox/sealed_audit.jsonl",  # Container path, not host
             "python:3.12-slim",
             "python", "/sandbox/agent-core/re_cur.py",
         ])
@@ -364,11 +376,6 @@ def main(num_runs: int, max_runtime: int) -> None:
             text=True
         )
 
-        # Host-side sealed audit tailer. Writes to eval_results/chats/ which is
-        # NOT mounted into the container, so the agent cannot rm or rewrite it.
-        audit_path = os.path.join(
-            CHATS_DIR, f"run{i+1}_{int(start_time)}_sealed_audit.jsonl"
-        )
         audit_stop = threading.Event()
         audit_thread = threading.Thread(
             target=sealed_audit_watcher, args=(audit_path, audit_stop), daemon=True

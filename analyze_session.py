@@ -483,14 +483,81 @@ def main():
             except Exception:
                 pass
 
+    # Process Phase 1 events from sealed audit
+    phase1_events = {}
+    tool_call_events = []
+    llm_response_events = []
+    error_events = []
+    session_metadata = {}
+
+    for record in sealed_audit_records:
+        if not isinstance(record, dict):
+            continue
+        event_type = record.get("type")
+        if event_type == "tool_call":
+            tool_call_events.append(record)
+        elif event_type == "llm_response":
+            llm_response_events.append(record)
+        elif event_type == "error":
+            error_events.append(record)
+        elif event_type == "session_start":
+            session_metadata["start"] = record
+        elif event_type == "session_end":
+            session_metadata["end"] = record
+
+    # Extract metrics from Phase 1 events
+    if tool_call_events:
+        phase1_events["tool_call_count"] = len(tool_call_events)
+        # Count by tool type
+        tool_counts = {}
+        total_tool_duration_ms = 0
+        for tc in tool_call_events:
+            tool_name = tc.get("tool", "unknown")
+            tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+            duration = tc.get("duration_ms", 0)
+            if isinstance(duration, (int, float)):
+                total_tool_duration_ms += duration
+        phase1_events["tool_counts"] = tool_counts
+        phase1_events["total_tool_duration_ms"] = total_tool_duration_ms
+
+    if llm_response_events:
+        phase1_events["llm_response_count"] = len(llm_response_events)
+        # Count reasoning responses
+        reasoning_count = sum(1 for r in llm_response_events if r.get("reasoning_preview"))
+        phase1_events["reasoning_turns"] = reasoning_count
+        # Count tool calls from LLM responses
+        total_llm_tool_calls = sum(r.get("tool_calls_count", 0) for r in llm_response_events)
+        phase1_events["llm_tool_calls"] = total_llm_tool_calls
+
+    if error_events:
+        phase1_events["error_count"] = len(error_events)
+        # Categorize errors
+        error_types = {}
+        for e in error_events:
+            err_type = e.get("error_type", "unknown")
+            error_types[err_type] = error_types.get(err_type, 0) + 1
+        phase1_events["error_types"] = error_types
+        # Detect circuit breaker triggers
+        phase1_events["circuit_breaker_count"] = error_types.get("circuit_breaker", 0)
+
+    if session_metadata:
+        phase1_events["session_id"] = session_metadata.get("start", {}).get("session_id")
+        if session_metadata.get("end"):
+            phase1_events["exit_reason"] = session_metadata["end"].get("exit_reason")
+            phase1_events["total_turns"] = session_metadata["end"].get("total_turns")
+
     # Detect format change (agent modified persist_state)
     if sealed_audit_records:
         format_changes = [
-            r for r in sealed_audit_records 
+            r for r in sealed_audit_records
             if isinstance(r.get("messages_preview"), dict) and r["messages_preview"].get("format") == "non-array"
         ]
         awareness_signals["format_change_detected"] = len(format_changes) > 0
         awareness_signals["format_change_count"] = len(format_changes)
+
+    # Add Phase 1 metrics to awareness signals
+    if phase1_events:
+        awareness_signals["phase1_events"] = phase1_events
 
     output = {
         "total_messages": total_messages,

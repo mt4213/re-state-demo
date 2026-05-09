@@ -14,7 +14,13 @@ TOOL_TIMEOUT = 30  # seconds
 
 # Protected paths: measurement instruments the agent cannot modify
 # Critical for rollback integrity - .git in agent-core/ breaks git checkout
-PROTECTED_PATHS = [".git", "agent-core/.git"]
+# Also protects the audit logging instrument from tampering
+PROTECTED_PATHS = [
+    ".git",
+    "agent-core/.git",
+    "agent-core/sealed_audit.py",  # Audit logger - tamper evidence
+    "agent-core/tools/execute.py",  # Tool execution hook with logging
+]
 
 
 def _touches_protected(command: str) -> bool:
@@ -237,7 +243,7 @@ def execute(tool_call, session_id=None):
             session_id=session_id,
             tool_name=name,
             tool_input=args,
-            output=output[:1000],  # Truncate for audit log
+            output=output,  # Pass full output; sealed_audit.py handles truncation
             duration_ms=duration_ms,
             exit_code=exit_code,
         )

@@ -1,86 +1,120 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Wrapper script to run the autonomous agency benchmark
-# Assumes LLM server is already running manually
 
+# Exit immediately if a command exits with a non-zero status, and treat unset variables as an error
+set -euo pipefail
+
+# ==========================================
+# Configuration & Variables
+# ==========================================
+RUNS=${1:-1}
+REVIEW_SCRIPT="re_view/re_view.py"
+REVIEW_PORT="5050"
+REVIEW_URL="http://127.0.0.1:${REVIEW_PORT}"
+ENV_FILE=".env" # Assumes .env is in the same directory as the script
+
+# Colors for professional logging
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# ==========================================
+# Helper Functions
+# ==========================================
+log_info()    { echo -e "[*] $1"; }
+log_success() { echo -e "${GREEN}[+] $1${NC}"; }
+log_warn()    { echo -e "${YELLOW}[-] WARNING: $1${NC}"; }
+log_error()   { echo -e "${RED}[!] ERROR: $1${NC}"; }
 
 get_env() {
     local key=$1
     local default=$2
-    val=$(grep "^${key}=" /home/user_a/projects/sandbox/.env 2>/dev/null | cut -d '=' -f 2- | sed 's/#.*$//' | tr -d ' ')
-    echo "${val:-$default}"
+    # Safely extract env var without destroying spaces
+    if [[ -f "$ENV_FILE" ]]; then
+        local val
+        val=$(grep "^${key}=" "$ENV_FILE" 2>/dev/null | cut -d '=' -f 2- | sed 's/^[ "\'\t]*//;s/[ "\'\t]*$//')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
 }
 
-RUNS=${1:-1}
+check_health() {
+    local url=$1
+    # Returns the HTTP status code (e.g., 200, 404, 000 if unreachable)
+    curl -s -o /dev/null -w "%{http_code}" "$url/health" || echo "000"
+}
 
-# Define the UI script name and port
-REVIEW_SCRIPT="re_view/re_view.py" # Change this if your python file is named differently
-REVIEW_PORT="5050"
+# ==========================================
+# Main Execution
+# ==========================================
 LLM_BASE_URL=$(get_env "LLM_BASE_URL" "http://127.0.0.1:8080")
+
 echo "============================================="
 echo "            Evaluation Pipeline              "
 echo "============================================="
 
-echo "[*] Checking UI status..."
+# -------------------------------------------
+# 1. Start UI (Review Script)
+# -------------------------------------------
+log_info "Checking UI status..."
 
-# 1. Check if the UI is already running via its /health endpoint
-UI_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$REVIEW_PORT/health)
-
-if [ "$UI_STATUS" -eq 200 ]; then
-    echo "[+] UI is already running on port $REVIEW_PORT."
+if [[ "$(check_health "$REVIEW_URL")" == "200" ]]; then
+    log_success "UI is already running on port $REVIEW_PORT."
 else
-    echo "[*] UI not found. Starting $REVIEW_SCRIPT in the background..."
+    log_info "UI not found. Starting $REVIEW_SCRIPT in the background..."
     
-    # Start the python script in the background using '&'
-    # '> /dev/null 2>&1' hides its output so it doesn't clutter your terminal
     python3 "$REVIEW_SCRIPT" > /dev/null 2>&1 &
+    sleep 1.5 # Give HTTP server time to bind
     
-    # Give the HTTP server 1.5 seconds to bind to the port and start
-    sleep 1.5
-    
-    # Verify it actually started
-    UI_STATUS_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$REVIEW_PORT/health)
-    if [ "$UI_STATUS_CHECK" -eq 200 ]; then
-        echo "[+] UI successfully started."
+    if [[ "$(check_health "$REVIEW_URL")" == "200" ]]; then
+        log_success "UI successfully started."
     else
-        echo "[-] WARNING: UI did not respond after starting. (Check if port is blocked or script has errors)"
+        log_warn "UI did not respond after starting. (Check if port is blocked or script has errors)"
     fi
 fi
 
 echo "---------------------------------------------"
 
-# Ensure the LLM server is accessible
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" $LLM_BASE_URL/health)
+# -------------------------------------------
+# 2. Start LLM Server
+# -------------------------------------------
+log_info "Checking LLM Server at $LLM_BASE_URL..."
 
-if [ "$STATUS" != "200" ]; then
-    echo "[!] LLM Server is offline. Starting..."
+if [[ "$(check_health "$LLM_BASE_URL")" != "200" ]]; then
+    log_error "LLM Server is offline. Starting..."
     ./llama_run.sh > /tmp/llama_run.log 2>&1 &
-    DOCKER_PID=$!
-
-    # Wait for server to be ready (up to 60 seconds)
-    echo "[*] Waiting for LLM server (max 60s)..."
+    
+    log_info "Waiting for LLM server (max 60s)..."
+    server_up=false
+    
     for i in {1..30}; do
-        sleep 2
-        HEALTH=$(curl -s -o /dev/null -w "%{http_code}" "$LLM_BASE_URL/health")
-        if [ "$HEALTH" = "200" ]; then
-            echo "[+] LLM Server is ONLINE."
+        if [[ "$(check_health "$LLM_BASE_URL")" == "200" ]]; then
+            server_up=true
             break
         fi
         echo -n "."
+        sleep 2
     done
+    echo "" # Newline after dots
 
-    # Final check
-    FINAL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
-    if [ "$FINAL_STATUS" != "200" ]; then
-        echo ""
-        echo "[-] LLM Server failed to start. Check /tmp/llama_run.log"
+    if [[ "$server_up" == true ]]; then
+        log_success "LLM Server is ONLINE."
+    else
+        log_error "LLM Server failed to start. Check /tmp/llama_run.log"
         exit 1
     fi
-    echo ""
 else
-    echo "[+] LLM Server is ONLINE."
+    log_success "LLM Server is ONLINE."
 fi
-echo ""
-echo "Initiating $RUNS run(s)..."
-python3 benchmark.py --runs $RUNS
 
-echo "Done."
+echo "---------------------------------------------"
+
+# -------------------------------------------
+# 3. Run Benchmark
+# -------------------------------------------
+echo -e "\nInitiating $RUNS run(s)..."
+python3 benchmark.py --runs "$RUNS"
+
+log_success "Evaluation Pipeline Complete."

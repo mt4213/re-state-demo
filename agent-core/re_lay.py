@@ -1,7 +1,10 @@
-"""re_lay — LLM request router for re_cur engine."""
+"""
+re_lay — Robust LLM request router for re_cur engine. 
+Fixes context-stripping issues while maintaining compatibility with Qwen/Thinking models,
+and ensures strict API adherence for tool calling.
+"""
 
 import env_config  # noqa: F401 - ensures .env is loaded before module-level os.getenv() calls
-
 import json
 import logging
 import os
@@ -12,11 +15,11 @@ import copy
 logger = logging.getLogger("re_lay")
 
 DEFAULT_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
-DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "10"))
+DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 DEFAULT_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
 
 # Tool definitions for the LLM (OpenAI function-calling format)
-TOOLS = [
+TOOLS =[
     {
         "type": "function",
         "function": {
@@ -25,14 +28,8 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "thought": {
-                        "type": "string",
-                        "description": "Brief reason for this action (under 20 words)."
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "The bash command to execute."
-                    }
+                    "thought": {"type": "string", "description": "Brief reason for this action."},
+                    "command": {"type": "string", "description": "The bash command to execute."}
                 },
                 "required": ["thought", "command"]
             }
@@ -46,14 +43,8 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "thought": {
-                        "type": "string",
-                        "description": "Brief reason for this action (under 20 words)."
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to the file to read."
-                    }
+                    "thought": {"type": "string", "description": "Brief reason for this action."},
+                    "path": {"type": "string", "description": "Absolute path to the file to read."}
                 },
                 "required": ["thought", "path"]
             }
@@ -67,107 +58,112 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "thought": {
-                        "type": "string",
-                        "description": "Brief reason for this action (under 20 words)."
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to the file."
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The content to write."
-                    }
+                    "thought": {"type": "string", "description": "Brief reason for this action."},
+                    "path": {"type": "string", "description": "Absolute path to the file."},
+                    "content": {"type": "string", "description": "The content to write."}
                 },
-                "required": ["thought", "path", "content"]
+                "required":["thought", "path", "content"]
             }
         }
     }
 ]
 
+def _prepare_messages(messages):
+    """
+    Normalizes message history. Reconstructs assistant messages with embedded 
+    thoughts to preserve context without triggering prefill errors.
+    Ensures strict API compatibility for tool-calling formats.
+    """
+    clean_messages =[]
+
+    for msg in copy.deepcopy(messages):
+        role = msg.get("role", "")
+        content = msg.get("content") or ""
+        reasoning = msg.get("reasoning")
+        tool_calls = msg.get("tool_calls")
+
+        if role == "system":
+            if content.strip():
+                clean_messages.append({"role": "system", "content": content})
+        
+        elif role == "user":
+            clean_messages.append({"role": "user", "content": content})
+            
+        elif role == "tool":
+            clean_messages.append({
+                "role": "tool", 
+                "tool_call_id": msg.get("tool_call_id", ""), 
+                "content": content
+            })
+            
+        elif role in ("assistant", "self", "entity"):
+            new_msg = {"role": "assistant"}
+            
+            # Wrap previous reasoning in tags so the model sees it as past context
+            if reasoning:
+                content = f"<thought>\n{reasoning}\n</thought>\n{content}"
+            
+            # OpenAI/vLLM strictness: Provide an empty content string if there are tool_calls
+            if content.strip():
+                new_msg["content"] = content.strip()
+            elif tool_calls:
+                new_msg["content"] = "" 
+            
+            if tool_calls:
+                new_msg["tool_calls"] = tool_calls
+            
+            # Ensure message isn't empty (API requirement)
+            if "content" in new_msg or "tool_calls" in new_msg:
+                clean_messages.append(new_msg)
+
+    # Fallback if history is empty
+    if not clean_messages:
+        clean_messages.append({"role": "user", "content": "."})
+        
+    return clean_messages
 
 def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
-    """Send messages to llama.cpp with streaming and return the parsed response dict."""
+    """
+    Send messages to LLM with streaming and full context preservation.
+    """
     base_url = base_url or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
     max_tokens = max_tokens or int(os.getenv("LLM_MAX_TOKENS", str(DEFAULT_MAX_TOKENS)))
     timeout = timeout or int(os.getenv("LLM_TIMEOUT", str(DEFAULT_TIMEOUT)))
     model = os.getenv("LLM_MODEL", "local")
 
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
-
-    # Build messages without assistant prefill to avoid "Assistant response prefill 
-    # is incompatible with enable_thinking" error with Qwen3 thinking mode.
-    clean_messages = []
-    for msg in copy.deepcopy(messages):
-        role = msg.get("role", "")
-        if role == "system":
-            # Keep system messages as-is, but only if they have content
-            if msg.get("content", "").strip():
-                clean_messages.append({"role": "system", "content": msg.get("content")})
-        elif role == "tool":
-            # Tool results are essential - include them
-            clean_msg = {"role": "tool", "tool_call_id": msg.get("tool_call_id", ""), "content": msg.get("content", "")}
-            clean_messages.append(clean_msg)
-        elif role == "user":
-            # User messages are important
-            clean_msg = {"role": "user", "content": msg.get("content", "")}
-            clean_messages.append(clean_msg)
-        elif role in ("assistant", "self", "entity"):
-            # Skip entirely - sending empty assistant (no content/tool_calls) causes
-            # API error "Assistant message must contain either 'content' or 'tool_calls'!"
-            # Content was stripped to avoid Qwen3 thinking mode prefill errors.
-            pass
-
-    # Remove empty system messages
-    clean_messages = [
-        m for m in clean_messages
-        if not (m.get("role") == "system" and not (m.get("content") or "").strip())
-    ]
-    
-    # Ensure we have at least one message (required by API)
-    if not clean_messages:
-        # All messages were filtered out - add a dummy user message as fallback
-        # This prevents "No messages provided" error from llama.cpp
-        clean_messages.append({"role": "user", "content": "."})
+    clean_messages = _prepare_messages(messages)
 
     payload = {
         "model": model,
         "messages": clean_messages,
         "max_tokens": max_tokens,
-        "temperature": 1,
+        "temperature": 0.7,  # Lowered for more stable reasoning and tool formatting
         "stream": True,
     }
     if tools:
         payload["tools"] = tools
 
     body = json.dumps(payload).encode("utf-8")
-    
     api_key = os.getenv("LLM_API_KEY", "")
     headers = {"Content-Type": "application/json"}
     if api_key and api_key.lower() != "dummy":
         headers["Authorization"] = f"Bearer {api_key}"
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers=headers,
-        method="POST",
-    )
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             accumulated_content = ""
             accumulated_reasoning = ""
             tool_calls_acc = {}
+            
             for line in resp:
                 line = line.decode("utf-8").strip()
-                if not line or line.startswith(":"):
-                    continue
+                if not line or line.startswith(":"): continue
                 if line.startswith("data: "):
                     data_str = line[len("data: "):]
-                    if data_str == "[DONE]":
-                        break
+                    if data_str == "[DONE]": break
                     try:
                         chunk = json.loads(data_str)
                         delta = chunk["choices"][0]["delta"]
@@ -183,16 +179,14 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
                                 idx = tc_delta["index"]
                                 if idx not in tool_calls_acc:
                                     tool_calls_acc[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
-                                if "id" in tc_delta:
-                                    tool_calls_acc[idx]["id"] = tc_delta["id"]
-                                if "type" in tc_delta:
-                                    tool_calls_acc[idx]["type"] = tc_delta["type"]
+                                
+                                if "id" in tc_delta: tool_calls_acc[idx]["id"] = tc_delta["id"]
+                                if "type" in tc_delta: tool_calls_acc[idx]["type"] = tc_delta["type"]
+                                
                                 if "function" in tc_delta:
                                     fn = tc_delta["function"]
-                                    if "name" in fn:
-                                        tool_calls_acc[idx]["function"]["name"] += fn["name"]
-                                    if "arguments" in fn:
-                                        tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
+                                    if "name" in fn: tool_calls_acc[idx]["function"]["name"] += fn["name"]
+                                    if "arguments" in fn: tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
                         
                         on_chunk(accumulated_content, list(tool_calls_acc.values()), accumulated_reasoning)
                     except (json.JSONDecodeError, KeyError, IndexError):
@@ -205,6 +199,7 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
                 "reasoning": accumulated_reasoning or None,
                 "error": None
             }
+
     except urllib.error.HTTPError as e:
         error_body = ""
         try:
@@ -214,17 +209,12 @@ def send_stream(messages, on_chunk, base_url=None, max_tokens=None, timeout=None
         logger.error("LLM HTTP %s: %s", e.code, error_body)
         return {"content": None, "tool_calls": None, "error": f"HTTP {e.code}: {error_body}"}
     except Exception as e:
-        logger.error("LLM request failed: %s", e)
+        logger.error("Streaming request failed: %s", e)
         return {"content": None, "tool_calls": None, "error": str(e)}
 
-
 def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
-    """Send messages to llama.cpp and return the parsed response dict.
-    
-    Returns dict with keys:
-      - "content": str or None (text response)
-      - "tool_calls": list of tool call dicts, or None
-      - "error": str if request failed
+    """
+    Non-streaming version of the request router.
     """
     base_url = base_url or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
     max_tokens = max_tokens or int(os.getenv("LLM_MAX_TOKENS", str(DEFAULT_MAX_TOKENS)))
@@ -232,68 +222,37 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
     model = os.getenv("LLM_MODEL", "local")
 
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
-
-    # Build messages without assistant prefill to avoid "Assistant response prefill 
-    # is incompatible with enable_thinking" error with Qwen3 thinking mode.
-    clean_messages = []
-    for msg in copy.deepcopy(messages):
-        role = msg.get("role", "")
-        if role == "system":
-            # Keep system messages as-is, but only if they have content
-            if msg.get("content", "").strip():
-                clean_messages.append({"role": "system", "content": msg.get("content")})
-        elif role == "tool":
-            # Tool results are essential - include them
-            clean_msg = {"role": "tool", "tool_call_id": msg.get("tool_call_id", ""), "content": msg.get("content", "")}
-            clean_messages.append(clean_msg)
-        elif role == "user":
-            # User messages are important
-            clean_msg = {"role": "user", "content": msg.get("content", "")}
-            clean_messages.append(clean_msg)
-        elif role in ("assistant", "self", "entity"):
-            # Skip entirely - sending empty assistant (no content/tool_calls) causes
-            # API error "Assistant message must contain either 'content' or 'tool_calls'!"
-            # Content was stripped to avoid Qwen3 thinking mode prefill errors.
-            pass
-
-    # Remove empty system messages
-    clean_messages = [
-        m for m in clean_messages
-        if not (m.get("role") == "system" and not (m.get("content") or "").strip())
-    ]
-    
-    # Ensure we have at least one message (required by API)
-    if not clean_messages:
-        # All messages were filtered out - add a dummy user message as fallback
-        # This prevents "No messages provided" error from llama.cpp
-        clean_messages.append({"role": "user", "content": "."})
+    clean_messages = _prepare_messages(messages)
 
     payload = {
         "model": model,
         "messages": clean_messages,
         "max_tokens": max_tokens,
-        "temperature": 1.05,
+        "temperature": 0.7,
     }
     if tools:
         payload["tools"] = tools
 
     body = json.dumps(payload).encode("utf-8")
-    
     api_key = os.getenv("LLM_API_KEY", "")
     headers = {"Content-Type": "application/json"}
     if api_key and api_key.lower() != "dummy":
         headers["Authorization"] = f"Bearer {api_key}"
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers=headers,
-        method="POST",
-    )
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+            choice = data["choices"][0]
+            msg = choice["message"]
+            return {
+                "content": msg.get("content"),
+                "tool_calls": msg.get("tool_calls"),
+                "reasoning": msg.get("reasoning_content"),  # Capture Qwen-style reasoning
+                "error": None,
+            }
+
     except urllib.error.HTTPError as e:
         error_body = ""
         try:
@@ -303,18 +262,5 @@ def send(messages, base_url=None, max_tokens=None, timeout=None, tools=TOOLS):
         logger.error("LLM HTTP %s: %s", e.code, error_body)
         return {"content": None, "tool_calls": None, "error": f"HTTP {e.code}: {error_body}"}
     except Exception as e:
-        logger.error("LLM request failed: %s", e)
+        logger.error("Request failed: %s", e)
         return {"content": None, "tool_calls": None, "error": str(e)}
-
-    # Parse response
-    try:
-        choice = data["choices"][0]
-        msg = choice["message"]
-        return {
-            "content": msg.get("content"),
-            "tool_calls": msg.get("tool_calls"),
-            "error": None,
-        }
-    except (KeyError, IndexError) as e:
-        logger.error("Unexpected LLM response structure: %s", e)
-        return {"content": None, "tool_calls": None, "error": f"Bad response: {e}"}

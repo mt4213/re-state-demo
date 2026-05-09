@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import typing
+import uuid
 from datetime import datetime, timezone, timedelta
 
 import re_lay
@@ -41,6 +42,11 @@ TZ_PARIS = timezone(timedelta(hours=2))
 def get_timestamp():
     """Get current UTC timestamp formatted for Europe/Paris timezone."""
     return datetime.now(TZ_PARIS).isoformat()
+
+
+def generate_session_id():
+    """Generate a unique session ID for this agent run."""
+    return f"sess_{uuid.uuid4().hex[:12]}"
 
 
 logging.basicConfig(
@@ -135,6 +141,10 @@ def persist_state(messages):
 def main():
     logger.info("re_cur engine starting (agent role: %s)", AGENT_ROLE)
 
+    # Generate unique session ID and log session start
+    session_id = generate_session_id()
+    sealed_audit.log_session_start(session_id, SYSTEM_PROMPT)
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
     ]
@@ -194,11 +204,15 @@ def main():
         if response.get("error"):
             err = response["error"]
             logger.error("LLM error on turn %d: %s", iteration, err)
+            sealed_audit.log_error(session_id, "llm_error", err,
+                context={"turn": iteration})
             # JSON parse / truncation error — synthesize the failed turn in context
             # so the model sees a concrete error instead of regenerating blindly.
             if "parse_error" in err or "parse tool call" in err.lower() or "missing closing quote" in err.lower():
                 parse_error_count += 1
                 logger.warning("Parse error on turn %d (%d/%d): %s", iteration, parse_error_count, MAX_PARSE_ERROR_TURNS, err)
+                sealed_audit.log_error(session_id, "parse_error", err,
+                    context={"turn": iteration, "count": parse_error_count})
                 err_id = f"err-{iteration}"
                 messages.append({
                     "role": AGENT_ROLE,
@@ -225,12 +239,20 @@ def main():
                 _write_stream({"done": True}, force=True)
                 if parse_error_count >= MAX_PARSE_ERROR_TURNS:
                     logger.error("Circuit breaker: %d consecutive parse errors. Halting.", parse_error_count)
+                    sealed_audit.log_error(session_id, "circuit_breaker",
+                        f"{parse_error_count} consecutive parse errors",
+                        context={"turn": iteration, "count": parse_error_count})
+                    sealed_audit.log_session_end(session_id, "circuit_breaker: parse_errors", iteration, 1)
                     _write_stream({"done": True}, force=True)
                     sys.exit(1)
                 continue
             llm_error_count += 1
             if llm_error_count >= MAX_LLM_ERROR_TURNS:
                 logger.error("Circuit breaker: %d consecutive API failures. Halting.", llm_error_count)
+                sealed_audit.log_error(session_id, "circuit_breaker",
+                    f"{llm_error_count} consecutive LLM API errors",
+                    context={"turn": iteration, "count": llm_error_count})
+                sealed_audit.log_session_end(session_id, "circuit_breaker: llm_errors", iteration, 1)
                 _write_stream({"done": True}, force=True)
                 sys.exit(1)
             _write_stream({"done": True}, force=True)
@@ -240,6 +262,15 @@ def main():
         # Reset API error counter on success
         llm_error_count = 0
         parse_error_count = 0  # Reset on successful LLM response
+
+        # Log successful LLM response to audit
+        sealed_audit.log_llm_response(
+            session_id=session_id,
+            turn=iteration,
+            reasoning=response.get("reasoning"),
+            content=response.get("content"),
+            tool_calls=response.get("tool_calls"),
+        )
 
         # Build agent message using configurable role
         agent_msg: dict[str, typing.Any] = {"role": AGENT_ROLE}
@@ -299,7 +330,7 @@ def main():
                 current_signature_list.append((func.get("name", ""), func.get("arguments", "")))
                 
                 _signal.info("[ACT] %s(%s)", func.get("name", "?").replace('\n', '\\n'), display_args.replace('\n', '\\n'))
-                tool_result = execute(tc)
+                tool_result = execute(tc, session_id=session_id)
                 tool_result["timestamp"] = get_timestamp()
                 _signal.info("[OBS] %s", tool_result.get("content", "")[:300].replace('\n', '\\n'))
                 messages.append(tool_result)
@@ -311,6 +342,10 @@ def main():
                 repeated_tool_count += 1
                 if repeated_tool_count >= MAX_REPEATED_TOOL_TURNS:
                     logger.info("Circuit breaker: %d consecutive identical tool turns. Halting.", repeated_tool_count)
+                    sealed_audit.log_error(session_id, "circuit_breaker",
+                        f"{repeated_tool_count} consecutive identical tool turns",
+                        context={"turn": iteration, "count": repeated_tool_count})
+                    sealed_audit.log_session_end(session_id, "circuit_breaker: repeated_tools", iteration, 1)
                     sys.exit(1)
             else:
                 repeated_tool_count = 0
@@ -357,6 +392,10 @@ def main():
 
             if no_tool_count >= MAX_NO_TOOL_TURNS:
                 logger.info("Circuit breaker: %d consecutive no-tool turns. Halting.", no_tool_count)
+                sealed_audit.log_error(session_id, "circuit_breaker",
+                    f"{no_tool_count} consecutive no-tool turns",
+                    context={"turn": iteration, "count": no_tool_count})
+                sealed_audit.log_session_end(session_id, "circuit_breaker: no_tool_turns", iteration, 1)
                 sys.exit(1)
 
         persist_state(messages)
@@ -364,6 +403,7 @@ def main():
 
     logger.info("re_cur stopped after %d turns", iteration)
     persist_state(messages)
+    sealed_audit.log_session_end(session_id, "natural", iteration, 0)
     sys.exit(0)
 
 

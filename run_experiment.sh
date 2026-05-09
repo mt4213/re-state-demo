@@ -2,12 +2,20 @@
 # Wrapper script to run the autonomous agency benchmark
 # Assumes LLM server is already running manually
 
+
+get_env() {
+    local key=$1
+    local default=$2
+    val=$(grep "^${key}=" /home/user_a/projects/sandbox/.env 2>/dev/null | cut -d '=' -f 2- | sed 's/#.*$//' | tr -d ' ')
+    echo "${val:-$default}"
+}
+
 RUNS=${1:-1}
 
 # Define the UI script name and port
 REVIEW_SCRIPT="re_view/re_view.py" # Change this if your python file is named differently
 REVIEW_PORT="5050"
-LLM_BASE_URL=os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
+LLM_BASE_URL=$(get_env "LLM_BASE_URL" "http://127.0.0.1:8080")
 echo "============================================="
 echo "            Evaluation Pipeline              "
 echo "============================================="
@@ -41,7 +49,7 @@ fi
 echo "---------------------------------------------"
 
 # Ensure the LLM server is accessible
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" $LLM_BASE_URL)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" $LLM_BASE_URL/health)
 
 if [ "$STATUS" != "200" ]; then
     echo "[!] LLM Server is offline. Starting..."
@@ -52,7 +60,7 @@ if [ "$STATUS" != "200" ]; then
     echo "[*] Waiting for LLM server (max 60s)..."
     for i in {1..30}; do
         sleep 2
-        HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health)
+        HEALTH=$(curl -s -o /dev/null -w "%{http_code}" "$LLM_BASE_URL/health")
         if [ "$HEALTH" = "200" ]; then
             echo "[+] LLM Server is ONLINE."
             break

@@ -286,6 +286,7 @@ def run_analyzer(sealed_audit_path: Optional[Path] = None) -> Dict[str, Any]:
 # Main Execution
 # ---------------------------------------------------------------------------
 def main(num_runs: int, max_runtime: int) -> None:
+    results = []
     # Ensure directories exist
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     DIFFS_DIR.mkdir(parents=True, exist_ok=True)

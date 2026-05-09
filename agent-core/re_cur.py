@@ -1,7 +1,5 @@
 """re_cur — Core ContReAct loop for autonomous agent."""
 
-import env_config  # noqa: F401 - ensures .env is loaded before module-level os.getenv() calls
-
 import json
 import logging
 import os
@@ -13,6 +11,24 @@ from datetime import datetime, timezone, timedelta
 import re_lay
 import sealed_audit
 from tools.execute import execute
+
+# Load .env from project root before any module-level os.getenv() calls
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_script_dir)
+_env_path = os.path.join(_project_root, ".env")
+if not os.path.exists(_env_path):
+    _env_path = os.path.join(os.getcwd(), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            value = value.split("#")[0].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            os.environ.setdefault(key.strip(), value)
 
 try:
     from memory import recall as recall_module
@@ -116,46 +132,12 @@ def persist_state(messages):
         json.dump(messages, f, ensure_ascii=False, indent=2)
 
 
-def load_episodic_memory():
-    """If the restart daemon left a crash-context file, compress it via re_scribe.
-
-    Returns a short first-person narrative string, or None if no crash context
-    is present or compression fails outright.
-    """
-    crash_path = os.environ.get("CRASH_CONTEXT_PATH")
-    if not crash_path or not os.path.exists(crash_path):
-        return None
-    try:
-        with open(crash_path, "r", encoding="utf-8") as f:
-            raw = f.read()
-    except Exception:
-        logger.exception("Failed reading crash context at %s", crash_path)
-        return None
-    if not raw.strip():
-        return None
-    import re_scribe
-    try:
-        return re_scribe.compress(raw)
-    except Exception:
-        logger.exception("re_scribe.compress raised — skipping episodic memory")
-        return None
-
-
 def main():
     logger.info("re_cur engine starting (agent role: %s)", AGENT_ROLE)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT, "timestamp": get_timestamp()},
     ]
-
-    memory = load_episodic_memory()
-    if memory:
-        logger.info("Loaded episodic memory from prior session (%d chars)", len(memory))
-        messages.append({
-            "role": "system",
-            "content": f"[Episodic memory from previous session] {memory}",
-            "timestamp": get_timestamp(),
-        })
 
     persist_state(messages)
     sealed_audit.write_sealed_record(messages)

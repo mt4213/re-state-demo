@@ -1,10 +1,9 @@
 """
-re_lay — Robust LLM request router for re_cur engine. 
+re_lay — Robust LLM request router for re_cur engine.
 Fixes context-stripping issues while maintaining compatibility with Qwen/Thinking models,
 and ensures strict API adherence for tool calling.
 """
 
-import env_config  # noqa: F401 - ensures .env is loaded before module-level os.getenv() calls
 import json
 import logging
 import os
@@ -13,6 +12,24 @@ import urllib.error
 import copy
 
 logger = logging.getLogger("re_lay")
+
+# Load .env from project root before any module-level os.getenv() calls
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_script_dir)
+_env_path = os.path.join(_project_root, ".env")
+if not os.path.exists(_env_path):
+    _env_path = os.path.join(os.getcwd(), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            value = value.split("#")[0].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            os.environ.setdefault(key.strip(), value)
 
 DEFAULT_BASE_URL = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
 DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))

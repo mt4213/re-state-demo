@@ -54,7 +54,7 @@ if [ "$UI_STATUS" = "200" ]; then
     echo "[+] UI is already running."
 else
     echo "[*] UI not found. Starting..."
-    python3 "$REVIEW_SCRIPT" > /dev/null 2>&1 &
+    ./venv/bin/python3 "$REVIEW_SCRIPT" > /dev/null 2>&1 &
     sleep 1.5
     
     if [ "$(check_health "$REVIEW_URL")" = "200" ]; then
@@ -87,5 +87,5 @@ fi
 
 # 3. Run Benchmark
 echo "Initiating $RUNS run(s)..."
-python3 benchmark.py --runs "$RUNS"
+./venv/bin/python3 benchmark.py --runs "$RUNS"
 echo "Done."

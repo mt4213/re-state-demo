@@ -1,7 +1,6 @@
 {
   "include": [
     "agent-core",
-    "restart/src",
     "benchmark.py",
     "analyze_session.py"
   ],
@@ -9,7 +8,6 @@
     "**/__pycache__",
     "**/node_modules",
     "**/.*",
-    "restart/src/restart.egg-info",
     "agent-core/.venv",
     "agent-core/.venv/**"
   ],

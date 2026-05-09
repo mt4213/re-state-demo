@@ -23,11 +23,12 @@ The agent uses Python 3.12+ with minimal dependencies. It speaks to any OpenAI-c
 # 2. Run one agent session
 python3 agent-core/re_cur.py
 
-# 3. Watch the conversation live
+# 3. Watch the conversation live (requires feat/visualization branch)
+git checkout feat/visualization  # Merge visualization modules first
 python3 re_view/re_view.py   # → http://localhost:5050
 ```
 
-**Continuous supervised loop** (restarts automatically on unexpected exit):
+**Continuous supervised loop** (restarts automatically on unexpected exit; requires feat/restart-daemon branch):
 
 ```bash
 cd restart && python3 -m venv .venv && .venv/bin/pip install -e . && cd ..
@@ -41,11 +42,32 @@ restart/.venv/bin/python -m restart --config restart/config.local.json
 ./run_experiment.sh 5    # 5 fresh-container runs → eval_results/
 ```
 
-**View experiment results in dashboard**:
+**View experiment results in dashboard** (requires feat/visualization branch):
 
 ```bash
+git checkout feat/visualization  # Merge visualization modules first
 cd eval-dashboard && npm install && npm run dev
 # → http://localhost:5173
+```
+
+## Modular Structure
+
+The codebase is organized into modular components to keep the research core minimal:
+
+**Core Repository (master branch):**
+- `agent-core/` — ContReAct loop implementation
+- `benchmark.py` — Experiment harness
+- `analyze_session.py` — Post-hoc analysis
+
+**Supporting Modules (feature branches):**
+- `feat/restart-daemon` — Process supervisor (merge: `git merge feat/restart-daemon`)
+- `feat/watchdog` — Auto-rollback safety system
+- `feat/visualization` — React dashboard + live streaming UI (eval-dashboard + re_view)
+
+To integrate a supporting module:
+```bash
+git checkout master
+git merge feat/<branch-name>  # e.g., feat/restart-daemon
 ```
 
 ## Motivation
@@ -120,7 +142,7 @@ The agent is a four-module ContReAct loop. Each module is a single file.
 | File | Role |
 |------|------|
 | `re_cur.py` | The ContReAct loop. Maintains `state/messages.json`, runs up to `MAX_ITERATIONS` turns, evicts old messages when history exceeds limits, and trips circuit breakers on repeated failures. |
-| `re_lay.py` | OpenAI-format chat completions client (streaming and non-streaming). Defines three tools: `terminal`, `file_read`, `file_write`. |
+| `re_lay.py` | OpenAI-format chat completions client (streaming and non-streaming). Defines three tools: `terminal`, `file_read`, `file_write`. On first turn (cold boot), echoes system prompt as user message so model acts on the directive. |
 | `tools/execute.py` | Dispatches tool calls. Enforces `PROTECTED_PATHS` to prevent the agent from editing measurement apparatus or recursively launching itself. |
 | `re_scribe.py` | Episodic-memory compressor (unused by main loop; called for crash-recovery summaries). |
 | `sealed_audit.py` | Append-only audit log written to `eval_results/chats/sealed_audit_*.jsonl`. Not mounted into agent's container for tamper-proofing. |
@@ -185,6 +207,7 @@ All tunables live in `.env` at the project root:
 ## Non-obvious Invariants
 
 - **Qwen3 thinking-mode quirk**: `re_lay.py` strips all assistant messages before sending to API, because Qwen3 with `enable_thinking` rejects assistant prefill. Do not "simplify" this by sending assistant history.
+- **First-turn system directive echo**: `re_lay.py` mirrors the `SYSTEM_PROMPT` as a user message on cold boot (when no user messages exist yet), so the model acts on the directive rather than treating "Continue." as a resume instruction. Do not replace this with a static fallback.
 - **Measurement integrity**: `tools/execute.py::PROTECTED_PATHS` and `re_cur.py` command-block check are load-bearing. Agent cannot edit `benchmark.py`, `analyze_session.py`, `.git`, or recursively spawn itself.
 - **Sealed audit lives outside container**: `sealed_audit.py` writes to host path; this directory is intentionally not a Docker mount.
 - **Benchmark resets via `git checkout`**: Uncommitted changes in `agent-core/` are discarded at each run start.

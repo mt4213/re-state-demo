@@ -41,3 +41,10 @@ watchdog/quarantine/
 watchdog/log.jsonl
 watchdog/run.out
 venv/
+
+# Feature branches - modules moved to feature branches
+# These directories exist when feature branches are merged
+/restart/
+/watchdog/
+/eval-dashboard/
+/re_view/

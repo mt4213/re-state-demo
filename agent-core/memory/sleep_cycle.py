@@ -1,10 +1,13 @@
 """
-Phase 4: Sleep-cycle batch processing.
+Phase 5: Sleep-cycle batch processing with validation.
 
-Scans eval_results/chats/ for new session logs (those without a summary),
-runs the summarizer on each, and writes SummaryEntry files alongside.
+Scans eval_results/chats/ for new session logs, summarizes, validates (L1/L2/L3),
+and writes approved summaries to the vector DB with validated=True.
 
-Idempotent: re-running skips already-summarized sessions.
+Reject flow: re-summarize once with stricter prompt; if still rejected,
+fall back to storing raw log chunks as Memory entries with validated=False.
+
+Idempotent: re-running skips already-validated sessions.
 
 Usage:
     python -m memory.sleep_cycle [--dry-run]
@@ -16,13 +19,21 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from memory.summarize import summarize_session, SummaryEntry
+from memory.summarize import summarize_session, SummaryEntry, _load_jsonl
+from memory.validate import (
+    validate_summary,
+    ValidationResult,
+    Decision,
+    re_summarize_strict,
+)
+from memory.vector_store import Memory, get_store
+from memory.embed import embed
 
 logger = logging.getLogger(__name__)
 
@@ -32,30 +43,27 @@ _DEFAULT_CHATS_DIR = Path("/home/user_a/projects/sandbox/eval_results/chats")
 
 def _get_chats_dir() -> Path:
     """Get the directory containing sealed audit logs."""
-    # Check env var first (for benchmark runs)
     env_path = os.getenv("SEALED_AUDIT_DIR")
     if env_path:
         return Path(env_path)
-
-    # Use default
     return _DEFAULT_CHATS_DIR
 
 
-def _find_unsummarized_sessions(chats_dir: Path) -> list[Path]:
+def _find_pending_sessions(chats_dir: Path) -> list[Path]:
     """
-    Find all sealed_audit_*.jsonl files without a corresponding .summary.json.
+    Find all sealed_audit_*.jsonl files without a .validated.json marker.
     """
     if not chats_dir.exists():
         logger.warning(f"Chats directory does not exist: {chats_dir}")
         return []
 
-    unsummarized = []
+    pending = []
     for jsonl_path in sorted(chats_dir.glob("sealed_audit_*.jsonl")):
-        summary_path = jsonl_path.with_suffix(".summary.json")
-        if not summary_path.exists():
-            unsummarized.append(jsonl_path)
+        validated_path = jsonl_path.with_suffix(".validated.json")
+        if not validated_path.exists():
+            pending.append(jsonl_path)
 
-    return unsummarized
+    return pending
 
 
 def _write_summary(summary: SummaryEntry, jsonl_path: Path) -> Path:
@@ -66,31 +74,265 @@ def _write_summary(summary: SummaryEntry, jsonl_path: Path) -> Path:
     return summary_path
 
 
+def _write_validation_marker(
+    jsonl_path: Path,
+    validation_result: ValidationResult,
+    final_content: str,
+) -> Path:
+    """Write .validated.json marker to indicate session was processed."""
+    validated_path = jsonl_path.with_suffix(".validated.json")
+    marker = {
+        "session_id": validation_result.metadata.get("session_id"),
+        "decision": validation_result.decision,
+        "confidence": validation_result.confidence,
+        "reason": validation_result.reason,
+        "validated_at": datetime.now(timezone.utc).isoformat(),
+        "final_content_length": len(final_content),
+    }
+    with open(validated_path, "w", encoding="utf-8") as f:
+        json.dump(marker, f, indent=2, ensure_ascii=False)
+    return validated_path
+
+
+def _extract_raw_chunks(jsonl_path: Path, n_chunks: int = 2) -> list[str]:
+    """
+    Fall back to storing raw log chunks when validation fails.
+    Returns the n_chunks longest tool_call output blocks.
+    """
+    events = _load_jsonl(jsonl_path)
+
+    # Find tool_call events with longest output
+    tool_outputs = []
+    for event in events:
+        if event.get("type") == "tool_call":
+            output = event.get("output", "")
+            if output:
+                tool_outputs.append((output, len(output)))
+
+    # Sort by length descending and take top n
+    tool_outputs.sort(key=lambda x: x[1], reverse=True)
+    return [output for output, _ in tool_outputs[:n_chunks]]
+
+
+def _store_in_vector_db(
+    content: str,
+    summary: SummaryEntry,
+    validation_result: ValidationResult,
+    origin: str = "live",
+) -> bool:
+    """
+    Embed and store validated summary in vector DB.
+
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Generate embedding
+        embedding = embed(content)
+        if embedding is None:
+            logger.warning("Embedding failed, skipping vector DB write")
+            return False
+
+        # Build metadata
+        metadata = {
+            "session_id": summary.session_id,
+            "source_log": summary.source_log_path,
+            "tools_used": summary.tools_used,
+            "files_touched": summary.files_touched,
+            "final_state": summary.final_state,
+            "n_tool_calls": summary.n_tool_calls,
+            "n_errors": summary.n_errors,
+            "validation_confidence": validation_result.confidence,
+            "validation_decision": validation_result.decision,
+        }
+
+        # Create Memory entry
+        memory = Memory(
+            content=content,
+            embedding=embedding,
+            metadata=metadata,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            origin=origin,
+            validated=True,  # Only store validated summaries
+        )
+
+        # Add to vector store
+        store = get_store()
+        store.add(memory)
+        logger.info(f"  -> Stored in vector DB (confidence={validation_result.confidence})")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to store in vector DB: {e}")
+        return False
+
+
+def _process_session(
+    jsonl_path: Path,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Process a single session through summarize -> validate -> store pipeline.
+
+    Returns:
+        Dict with status, decision, and any error info.
+    """
+    result = {
+        "jsonl_path": str(jsonl_path),
+        "status": "unknown",
+        "decision": None,
+        "stored_in_db": False,
+        "error": None,
+    }
+
+    try:
+        # Step 1: Summarize
+        logger.info(f"Processing: {jsonl_path.name}")
+        summary = summarize_session(jsonl_path)
+        if summary is None:
+            result["status"] = "failed"
+            result["error"] = "summarization failed"
+            return result
+
+        # Write summary file (for debugging/inspection)
+        if not dry_run:
+            _write_summary(summary, jsonl_path)
+
+        # Step 2: Validate
+        validation = validate_summary(summary, jsonl_path)
+        result["decision"] = validation.decision
+
+        # Step 3: Handle decision
+        final_content = validation.final_content
+        origin = "live"
+        validated = True
+
+        if validation.decision == Decision.APPROVE:
+            result["status"] = "approved"
+            logger.info(f"  -> Approved (confidence={validation.confidence})")
+
+        elif validation.decision == Decision.APPROVE_STRIPPED:
+            result["status"] = "approved_stripped"
+            logger.info(f"  -> Approved with stripped content (confidence={validation.confidence})")
+
+        elif validation.decision == Decision.REJECT:
+            # Re-summarize with stricter prompt
+            logger.info(f"  -> Rejected, re-summarizing with stricter prompt...")
+            stricter_content = re_summarize_strict(jsonl_path)
+
+            if stricter_content:
+                # Re-validate the stricter summary
+                stricter_summary = SummaryEntry(
+                    content=stricter_content,
+                    metadata=summary.metadata,
+                    session_id=summary.session_id,
+                    started_at=summary.started_at,
+                    ended_at=summary.ended_at,
+                    tools_used=summary.tools_used,
+                    files_touched=summary.files_touched,
+                    n_tool_calls=summary.n_tool_calls,
+                    n_errors=summary.n_errors,
+                    final_state=summary.final_state,
+                    source_log_path=summary.source_log_path,
+                )
+                re_validation = validate_summary(stricter_summary, jsonl_path)
+
+                if re_validation.decision in (Decision.APPROVE, Decision.APPROVE_STRIPPED):
+                    final_content = re_validation.final_content
+                    result["status"] = "approved_after_re_summarize"
+                    result["decision"] = re_validation.decision
+                    logger.info(f"  -> Re-summarize passed (decision={re_validation.decision})")
+                else:
+                    # Still rejected - fall back to raw chunks
+                    logger.info(f"  -> Re-summarize still rejected, falling back to raw chunks...")
+                    chunks = _extract_raw_chunks(jsonl_path, n_chunks=2)
+                    if chunks:
+                        final_content = " | ".join(chunks[:2])
+                        origin = "live"
+                        validated = False  # Raw chunks not validated via LLM
+                        result["status"] = "fallback_raw_chunks"
+                        logger.info(f"  -> Stored {len(chunks)} raw chunks as fallback")
+                    else:
+                        result["status"] = "failed"
+                        result["error"] = "validation rejected and no raw chunks available"
+                        return result
+            else:
+                # Strict re-summarization failed - fall back to raw chunks
+                logger.info(f"  -> Strict re-summarization failed, falling back to raw chunks...")
+                chunks = _extract_raw_chunks(jsonl_path, n_chunks=2)
+                if chunks:
+                    final_content = " | ".join(chunks[:2])
+                    origin = "live"
+                    validated = False
+                    result["status"] = "fallback_raw_chunks"
+                    logger.info(f"  -> Stored {len(chunks)} raw chunks as fallback")
+                else:
+                    result["status"] = "failed"
+                    result["error"] = "re-summarization failed and no raw chunks available"
+                    return result
+
+        # Step 4: Store in vector DB (unless dry run)
+        if not dry_run:
+            if validated:
+                stored = _store_in_vector_db(final_content, summary, validation, origin)
+                result["stored_in_db"] = stored
+            else:
+                # Raw chunks - still store but with validated=False
+                try:
+                    embedding = embed(final_content)
+                    if embedding:
+                        memory = Memory(
+                            content=final_content,
+                            embedding=embedding,
+                            metadata={"session_id": summary.session_id, "fallback": True},
+                            created_at=datetime.now(timezone.utc).isoformat(),
+                            origin=origin,
+                            validated=False,
+                        )
+                        get_store().add(memory)
+                        result["stored_in_db"] = True
+                        logger.info(f"  -> Stored raw chunks in vector DB (validated=False)")
+                except Exception as e:
+                    logger.error(f"Failed to store raw chunks: {e}")
+
+            # Write validation marker (idempotency key)
+            _write_validation_marker(jsonl_path, validation, final_content)
+
+    except Exception as e:
+        result["status"] = "failed"
+        result["error"] = str(e)
+        logger.exception(f"Error processing {jsonl_path.name}: {e}")
+
+    return result
+
+
 def run_sleep_cycle(
     chats_dir: Path | None = None,
     dry_run: bool = False,
 ) -> dict:
     """
-    Run the sleep cycle: summarize all unsummarized sessions.
+    Run the sleep cycle: summarize, validate, and store all pending sessions.
 
     Args:
         chats_dir: Directory containing sealed_audit_*.jsonl files
-        dry_run: If True, scan and report but don't write summaries
+        dry_run: If True, scan and report but don't write to vector DB
 
     Returns:
-        Dict with stats: total_scanned, already_summarized, newly_summarized, failed
+        Dict with detailed stats.
     """
     chats_dir = chats_dir or _get_chats_dir()
 
     stats = {
         "total_scanned": 0,
-        "already_summarized": 0,
-        "newly_summarized": 0,
+        "already_validated": 0,
+        "processed": 0,
+        "approved": 0,
+        "approved_stripped": 0,
+        "fallback_raw_chunks": 0,
         "failed": 0,
-        "summary_paths": [],
+        "stored_in_db": 0,
+        "results": [],
     }
 
-    # Find all JSONL files
     if not chats_dir.exists():
         logger.error(f"Chats directory does not exist: {chats_dir}")
         return stats
@@ -99,35 +341,37 @@ def run_sleep_cycle(
     stats["total_scanned"] = len(all_jsonl)
 
     for jsonl_path in all_jsonl:
-        summary_path = jsonl_path.with_suffix(".summary.json")
+        validated_path = jsonl_path.with_suffix(".validated.json")
 
-        if summary_path.exists():
-            stats["already_summarized"] += 1
-            logger.debug(f"Skipping (already summarized): {jsonl_path.name}")
+        if validated_path.exists():
+            stats["already_validated"] += 1
+            logger.debug(f"Skipping (already validated): {jsonl_path.name}")
             continue
 
-        logger.info(f"Summarizing: {jsonl_path.name}")
+        result = _process_session(jsonl_path, dry_run=dry_run)
+        stats["results"].append(result)
+        stats["processed"] += 1
 
-        if dry_run:
-            stats["newly_summarized"] += 1
-            stats["summary_paths"].append(str(summary_path) + " (dry-run)")
-            continue
-
-        try:
-            summary = summarize_session(jsonl_path)
-            if summary is None:
-                stats["failed"] += 1
-                logger.warning(f"Failed to summarize: {jsonl_path.name}")
-                continue
-
-            written_path = _write_summary(summary, jsonl_path)
-            stats["newly_summarized"] += 1
-            stats["summary_paths"].append(str(written_path))
-            logger.info(f"  -> Wrote: {written_path.name}")
-
-        except Exception as e:
+        # Update stats based on result
+        status = result.get("status", "unknown")
+        if status == "approved":
+            stats["approved"] += 1
+            if result.get("stored_in_db"):
+                stats["stored_in_db"] += 1
+        elif status == "approved_stripped":
+            stats["approved_stripped"] += 1
+            if result.get("stored_in_db"):
+                stats["stored_in_db"] += 1
+        elif status == "approved_after_re_summarize":
+            stats["approved"] += 1
+            if result.get("stored_in_db"):
+                stats["stored_in_db"] += 1
+        elif status == "fallback_raw_chunks":
+            stats["fallback_raw_chunks"] += 1
+            if result.get("stored_in_db"):
+                stats["stored_in_db"] += 1
+        elif status == "failed":
             stats["failed"] += 1
-            logger.exception(f"Error summarizing {jsonl_path.name}: {e}")
 
     return stats
 
@@ -136,28 +380,25 @@ def print_stats(stats: dict):
     """Pretty-print sleep cycle stats."""
     print(f"\nSleep Cycle Report ({datetime.now().isoformat()})")
     print("=" * 50)
-    print(f"Total scanned:     {stats['total_scanned']}")
-    print(f"Already summarized:{stats['already_summarized']}")
-    print(f"Newly summarized:  {stats['newly_summarized']}")
-    print(f"Failed:            {stats['failed']}")
+    print(f"Total scanned:      {stats['total_scanned']}")
+    print(f"Already validated:  {stats['already_validated']}")
+    print(f"Processed this run: {stats['processed']}")
+    print(f"  Approved:         {stats['approved']}")
+    print(f"  Approved stripped:{stats['approved_stripped']}")
+    print(f"  Fallback chunks:  {stats['fallback_raw_chunks']}")
+    print(f"  Failed:           {stats['failed']}")
+    print(f"Stored in vector DB: {stats['stored_in_db']}")
     print("=" * 50)
-
-    if stats["summary_paths"]:
-        print("\nSummary files written:")
-        for path in stats["summary_paths"][:10]:
-            print(f"  - {path}")
-        if len(stats["summary_paths"]) > 10:
-            print(f"  ... and {len(stats['summary_paths']) - 10} more")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sleep cycle: summarize unsummarized session logs"
+        description="Sleep cycle: summarize, validate, and store session logs"
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Scan and report but don't write summaries",
+        help="Scan and report but don't write to vector DB",
     )
     parser.add_argument(
         "--chats-dir",

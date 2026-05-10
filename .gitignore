@@ -49,3 +49,4 @@ venv/
 /eval-dashboard/
 /re_view/
 .worker-session/
+.worker-session

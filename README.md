@@ -50,7 +50,7 @@ python3 agent-core/re_cur.py
 
 ## Hardware Budget
 
-Target: RTX 2070 (8GB VRAM)
+Target: 8GB VRAM
 
 | Component | VRAM |
 |-----------|------|

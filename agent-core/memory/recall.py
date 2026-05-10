@@ -62,32 +62,17 @@ def recall(reasoning: str, k: int = 3) -> "str | None":
             return None
 
         store = get_store()
-        hits = store.search(vec, k=k)
+        # search() returns list[tuple[Memory, float]] — (memory, similarity_score)
+        # min_similarity param handles threshold filtering in-store
+        hits = store.search(vec, k=k, min_similarity=RECALL_SIM_THRESHOLD)
         if not hits:
             return None
 
-        # Score is not directly returned by search(); we need similarity.
-        # Re-compute top similarity to apply threshold check.
-        # vector_store.search returns Records sorted by descending similarity but
-        # doesn't expose scores.  Re-import _cosine to check the top hit.
-        from memory.vector_store import _cosine, _unpack
-        import struct
-
-        def _sim(record) -> float:
-            if record.embedding is None:
-                return 0.0
-            return _cosine(vec, record.embedding)
-
-        top_sim = _sim(hits[0])
-        if top_sim < RECALL_SIM_THRESHOLD:
-            return None
-
         parts = []
-        for rec in hits:
-            sim = _sim(rec)
-            rt = (rec.reasoning_text or "")[:120]
-            aj = (rec.action_json or "")[:80]
-            parts.append(f"<sim:{sim:.2f}> {rt} -> {aj}")
+        for mem, sim in hits:
+            # Memory.content is the text summary; no separate action_json field
+            content_preview = mem.content[:200]
+            parts.append(f"<sim:{sim:.2f}> {content_preview}")
 
         body = " | ".join(parts)
         prefix = "[Recalled context] "

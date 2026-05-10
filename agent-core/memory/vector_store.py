@@ -6,7 +6,6 @@ Uses stdlib struct/array for encoding to avoid numpy dependency in-container.
 """
 from __future__ import annotations
 
-import array
 import dataclasses as dc
 import json
 import math

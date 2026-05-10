@@ -48,3 +48,4 @@ venv/
 /watchdog/
 /eval-dashboard/
 /re_view/
+.worker-session/

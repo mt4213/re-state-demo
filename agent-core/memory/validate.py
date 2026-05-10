@@ -386,6 +386,7 @@ def validate_summary(
     summary: SummaryEntry,
     raw_jsonl_path: Path | str,
     llm_fn: Callable | None = None,
+    mode: str = "full",
 ) -> ValidationResult:
     """
     Validate a summary against its raw JSONL log using three-layer validation.
@@ -394,6 +395,7 @@ def validate_summary(
         summary: The SummaryEntry to validate
         raw_jsonl_path: Path to the source sealed_audit_*.jsonl file
         llm_fn: Optional mock function for testing semantic validation
+        mode: Validation mode - "full" for L1+L2+L3, "l1_only" for L1 deterministic only
 
     Returns:
         ValidationResult with decision, confidence, and modified content if needed
@@ -415,6 +417,37 @@ def validate_summary(
         summary.tools_used,
         summary.files_touched
     )
+
+    # L1-only mode: make decision based solely on deterministic checks
+    if mode == "l1_only":
+        # Any not_found claims -> reject
+        not_found_count = sum(1 for c in claims if c.verdict == ClaimVerdict.NOT_FOUND)
+        if not_found_count > 0:
+            return ValidationResult(
+                decision=Decision.REJECT,
+                confidence="low",
+                claims=claims,
+                final_content=summary.content,
+                reason=f"L1-only: {not_found_count} claims not found in log",
+                metadata={
+                    "session_id": summary.session_id,
+                    "validation_timestamp": _get_timestamp(),
+                    "validation_mode": "l1_only",
+                }
+            )
+        # All confirmed or unverifiable -> approve
+        return ValidationResult(
+            decision=Decision.APPROVE,
+            confidence="high",
+            claims=claims,
+            final_content=summary.content,
+            reason=f"L1-only: all deterministically-verifiable claims confirmed",
+            metadata={
+                "session_id": summary.session_id,
+                "validation_timestamp": _get_timestamp(),
+                "validation_mode": "l1_only",
+            }
+        )
 
     # LAYER 2: Semantic validation (only for unverifiable claims)
     claims = _validate_semantic(claims, raw_log_text, llm_fn=llm_fn)

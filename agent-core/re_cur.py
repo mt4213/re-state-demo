@@ -99,7 +99,7 @@ def _stream_callback(content, tool_calls, reasoning=None):
     _write_stream({"content": content, "tool_calls": tool_calls, "reasoning": reasoning, "done": False})
 MAX_REPEATED_TOOL_TURNS = 4
 MAX_HISTORY_CHARS = 25000
-MAX_ITERATIONS = 100
+MAX_ITERATIONS = int(os.getenv('MAX_ITERATIONS', '100'))
 
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "")
 if not SYSTEM_PROMPT.strip():

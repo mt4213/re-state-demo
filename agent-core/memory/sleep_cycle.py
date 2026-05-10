@@ -34,6 +34,7 @@ from memory.validate import (
 )
 from memory.vector_store import Memory, get_store
 from memory.embed import embed
+from memory.prune import prune_bootstrap
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +331,7 @@ def run_sleep_cycle(
         "fallback_raw_chunks": 0,
         "failed": 0,
         "stored_in_db": 0,
+        "bootstrap_pruned": 0,
         "results": [],
     }
 
@@ -373,6 +375,11 @@ def run_sleep_cycle(
         elif status == "failed":
             stats["failed"] += 1
 
+    # Bootstrap pruning: remove bootstrap memories if live count exceeds threshold
+    if os.environ.get('BOOTSTRAP_PRUNE_ON_SLEEP') == '1' and not dry_run:
+        logger.info("Checking bootstrap prune threshold...")
+        stats["bootstrap_pruned"] = prune_bootstrap()
+
     return stats
 
 
@@ -388,6 +395,8 @@ def print_stats(stats: dict):
     print(f"  Fallback chunks:  {stats['fallback_raw_chunks']}")
     print(f"  Failed:           {stats['failed']}")
     print(f"Stored in vector DB: {stats['stored_in_db']}")
+    if stats.get('bootstrap_pruned', 0) > 0:
+        print(f"Bootstrap pruned:    {stats['bootstrap_pruned']}")
     print("=" * 50)
 
 

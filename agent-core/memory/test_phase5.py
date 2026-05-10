@@ -416,6 +416,111 @@ def test_reject_with_many_semantic_rejections():
     print("    PASSED\n")
 
 
+def test_validator_hard_failure_unverifiable():
+    """Test validator-LLM hard failure (None return) -> UNVERIFIABLE -> APPROVE_STRIPPED."""
+    print("[L2/L3] Testing validator hard failure degrades to UNVERIFIABLE...")
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write(_SYNTHETIC_JSONL)
+        temp_path = Path(f.name)
+
+    try:
+        # Summary with confirmed deterministic claim + unverifiable semantic claim
+        # Put deterministic claim at END so semantic claim (first 200 chars) doesn't include it
+        # Total content > 100 chars to trigger semantic claim creation
+        summary = SummaryEntry(
+            content="The agent wanted to deeply understand the system architecture by exploring all the core modules and analyzing their complex interactions within the framework to gain comprehensive insight. Used terminal tool.",
+            metadata={"session_id": "test_phase5"},
+            session_id="test_phase5",
+            started_at="2026-05-10T10:00:00Z",
+            ended_at="2026-05-10T10:00:20Z",
+            tools_used={"terminal": 1},
+            files_touched=[],
+            n_tool_calls=1,
+            n_errors=0,
+            final_state="working",
+            source_log_path=str(temp_path),
+        )
+
+        # Mock LLM that returns None (simulating hard failure)
+        def mock_llm_hard_failure(log_excerpt, claim_text):
+            return None  # Hard failure sentinel
+
+        result = validate_summary(summary, temp_path, llm_fn=mock_llm_hard_failure)
+
+        # Should get APPROVE_STRIPPED (confirmed deterministic claim, unverifiable semantic claim)
+        assert result.decision == Decision.APPROVE_STRIPPED, \
+            f"Expected APPROVE_STRIPPED, got {result.decision}: {result.reason}"
+
+        # Check that semantic claim is UNVERIFIABLE
+        semantic_claims = [c for c in result.claims if c.claim_type == "semantic"]
+        assert len(semantic_claims) > 0, "Should have semantic claims"
+        assert semantic_claims[0].verdict == ClaimVerdict.UNVERIFIABLE, \
+            f"Semantic claim should be UNVERIFIABLE, got {semantic_claims[0].verdict}"
+
+        # Check that the unverifiable claim was stripped from final content
+        # The deterministic part at the end should remain
+        assert "Used terminal tool" in result.final_content or result.final_content != summary.content, \
+            "Deterministic claim should remain after stripping unverifiable content"
+
+        print(f"  ✓ Hard failure degraded to UNVERIFIABLE")
+        print(f"  ✓ Decision: {result.decision}")
+        print(f"  ✓ Unverifiable claim stripped")
+        print(f"  ✓ Final content: {result.final_content[:50]}...")
+        print("    PASSED\n")
+    finally:
+        temp_path.unlink()
+
+
+def test_validator_rejection_triggers_reject():
+    """Test validator-LLM returns False (rejects claim) -> REJECTED -> REJECT."""
+    print("[L2/L3] Testing validator rejection triggers REJECT...")
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write(_SYNTHETIC_JSONL)
+        temp_path = Path(f.name)
+
+    try:
+        # Summary with confirmed deterministic claim + semantic claim that LLM will reject
+        # Put deterministic claim at END so semantic claim doesn't include it
+        summary = SummaryEntry(
+            content="The agent attempted unauthorized access to the mainframe and tried to steal sensitive data from the database servers. Used terminal tool.",
+            metadata={"session_id": "test_phase5"},
+            session_id="test_phase5",
+            started_at="2026-05-10T10:00:00Z",
+            ended_at="2026-05-10T10:00:20Z",
+            tools_used={"terminal": 1},
+            files_touched=[],
+            n_tool_calls=1,
+            n_errors=0,
+            final_state="working",
+            source_log_path=str(temp_path),
+        )
+
+        # Mock LLM that rejects semantic claims
+        def mock_llm_rejects(log_excerpt, claim_text):
+            return False, "No evidence of this claim in log"
+
+        result = validate_summary(summary, temp_path, llm_fn=mock_llm_rejects)
+
+        # Should get REJECT (semantic claim was rejected by LLM)
+        assert result.decision == Decision.REJECT, \
+            f"Expected REJECT, got {result.decision}"
+
+        # Check that semantic claim is REJECTED
+        semantic_claims = [c for c in result.claims if c.claim_type == "semantic"]
+        assert len(semantic_claims) > 0, "Should have semantic claims"
+        assert semantic_claims[0].verdict == ClaimVerdict.REJECTED, \
+            f"Semantic claim should be REJECTED, got {semantic_claims[0].verdict}"
+
+        print(f"  ✓ LLM rejection marked as REJECTED")
+        print(f"  ✓ Decision: {result.decision}")
+        print(f"  ✓ Reason: {result.reason}")
+        print("    PASSED\n")
+    finally:
+        temp_path.unlink()
+
+
 def main():
     print("=" * 50)
     print("Phase 5 Validation: Sleep-Cycle Validation")
@@ -434,6 +539,8 @@ def main():
     test_validation_result_to_dict()
     test_load_raw_log()
     test_reject_with_many_semantic_rejections()
+    test_validator_hard_failure_unverifiable()
+    test_validator_rejection_triggers_reject()
 
     print("=" * 50)
     print("Phase 5 validation complete!")

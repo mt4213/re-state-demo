@@ -200,17 +200,17 @@ def test_idempotent_sleep_cycle():
 
         # First run: both should be summarized (dry-run mode)
         stats1 = run_sleep_cycle(chats_dir=chats_dir, dry_run=True)
-        assert stats1["newly_summarized"] == 2, f"Expected 2 new, got {stats1['newly_summarized']}"
-        assert stats1["already_summarized"] == 0
+        assert stats1["processed"] == 2, f"Expected 2 processed, got {stats1['processed']}"
+        assert stats1["already_validated"] == 0
 
-        # Write one summary file manually
-        summary_1 = chats_dir / "sealed_audit_001.summary.json"
-        summary_1.write_text(json.dumps({"test": "summary"}))
+        # Write one validation marker manually
+        validated_1 = chats_dir / "sealed_audit_001.validated.json"
+        validated_1.write_text(json.dumps({"test": "validation"}))
 
         # Second run: only one should be new
         stats2 = run_sleep_cycle(chats_dir=chats_dir, dry_run=True)
-        assert stats2["already_summarized"] == 1, f"Expected 1 already summarized, got {stats2['already_summarized']}"
-        assert stats2["newly_summarized"] == 1, f"Expected 1 new, got {stats2['newly_summarized']}"
+        assert stats2["already_validated"] == 1, f"Expected 1 already validated, got {stats2['already_validated']}"
+        assert stats2["processed"] == 1, f"Expected 1 processed, got {stats2['processed']}"
 
         print(f"  ✓ Idempotency works correctly")
         print("    PASSED\n")

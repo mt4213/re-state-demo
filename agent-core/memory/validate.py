@@ -84,10 +84,9 @@ class ValidationResult:
 # LAYER 1: Deterministic validation
 
 # Patterns to extract claims from prose
-_TOOL_PATTERN = re.compile(r'\b(terminal|file_read|file_write|file|read|write|executed|called|used)\s+(?:the\s+)?(\w+)\b', re.IGNORECASE)
-_FILE_PATTERN = re.compile(r'\b[\w\-./]+\.py\b|\b[\w\-./]+\.txt\b|\b[\w\-./]+\.md\b|\bagent-core/[\w\-./]+\b|\bworkspace/[\w\-./]+\b', re.IGNORECASE)
 _ERROR_PATTERN = re.compile(r'(?:error|fail|crash|timeout|exception)', re.IGNORECASE)
 _COUNT_PATTERN = re.compile(r'(\d+)\s+times?', re.IGNORECASE)
+
 
 
 def _extract_claims_from_prose(prose: str, known_tools: dict[str, int], known_files: list[str]) -> list[Claim]:
@@ -148,14 +147,11 @@ def _validate_deterministic(claims: list[Claim], raw_log_text: str, known_tools:
 
     for claim in claims:
         if claim.claim_type == "tool":
-            # Check if tool appears in log
+            # Check if tool appears in log (case-insensitive substring search)
             tool_str = str(claim.value).lower()
-            if f'"tool": "{claim.value}"' in raw_log_text or f'"tool":{claim.value}' in raw_log_text:
+            if tool_str in log_lower:
                 claim.verdict = ClaimVerdict.CONFIRMED
-                claim.evidence = f"Found in log: {claim.value}"
-            elif tool_str in log_lower:
-                claim.verdict = ClaimVerdict.CONFIRMED
-                claim.evidence = f"Found in log (case-insensitive)"
+                claim.evidence = f"Found in log"
             else:
                 claim.verdict = ClaimVerdict.NOT_FOUND
 
@@ -214,16 +210,21 @@ Be strict - only say yes if there's clear evidence.
 Answer in format: YES: [evidence] or NO: [reason]"""
 
 
-def _call_validator_llm(log_excerpt: str, claim_text: str, llm_fn: Callable | None = None) -> tuple[bool, str]:
+def _call_validator_llm(log_excerpt: str, claim_text: str, llm_fn: Callable | None = None) -> tuple[bool, str] | None:
     """
     LAYER 2: Call validator LLM to check semantic claim.
 
     Returns:
-        (is_supported, evidence_or_reason)
+        (True, evidence) if LLM confirms the claim
+        (False, reason) if LLM rejects the claim
+        None if validator LLM is hard-unavailable (network down, timeout, etc.)
     """
     if llm_fn is not None:
-        # Test injection point
-        return llm_fn(log_excerpt, claim_text)
+        # Test injection point: check for sentinel return
+        result = llm_fn(log_excerpt, claim_text)
+        # If test returns None, propagate it as hard failure
+        # Otherwise return (is_supported, evidence_or_reason) tuple
+        return result
 
     # Production: call the validator LLM
     base_url = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080")
@@ -276,8 +277,8 @@ def _call_validator_llm(log_excerpt: str, claim_text: str, llm_fn: Callable | No
 
     except Exception as e:
         logger.warning(f"Validator LLM call failed: {e}, treating as unverifiable")
-        # Degrade gracefully
-        return False, "Validation unavailable"
+        # Degrade gracefully: return None sentinel to distinguish from LLM saying 'no'
+        return None
 
 
 def _validate_semantic(claims: list[Claim], raw_log_text: str, llm_fn: Callable | None = None) -> list[Claim]:
@@ -287,18 +288,20 @@ def _validate_semantic(claims: list[Claim], raw_log_text: str, llm_fn: Callable 
             continue
 
         if claim.claim_type == "semantic":
-            try:
-                is_supported, evidence = _call_validator_llm(raw_log_text, claim.text, llm_fn)
+            result = _call_validator_llm(raw_log_text, claim.text, llm_fn)
+
+            if result is None:
+                # Hard failure: validator LLM unavailable
+                claim.verdict = ClaimVerdict.UNVERIFIABLE
+                claim.evidence = "Validator unavailable (hard failure)"
+            else:
+                is_supported, evidence = result
                 if is_supported:
                     claim.verdict = ClaimVerdict.CONFIRMED
                     claim.evidence = evidence
                 else:
                     claim.verdict = ClaimVerdict.REJECTED
                     claim.evidence = evidence
-            except Exception as e:
-                logger.warning(f"Semantic validation failed for claim '{claim.text}': {e}")
-                # Treat as unverifiable (will be stripped in L3)
-                claim.evidence = f"Validation error: {e}"
 
     return claims
 
@@ -314,6 +317,7 @@ def _make_decision(claims: list[Claim], original_content: str) -> tuple[Decision
     """
     not_found_count = sum(1 for c in claims if c.verdict == ClaimVerdict.NOT_FOUND)
     rejected_count = sum(1 for c in claims if c.verdict == ClaimVerdict.REJECTED)
+    unverifiable_count = sum(1 for c in claims if c.verdict == ClaimVerdict.UNVERIFIABLE)
     confirmed_count = sum(1 for c in claims if c.verdict == ClaimVerdict.CONFIRMED)
     total_claims = len(claims)
 
@@ -327,21 +331,37 @@ def _make_decision(claims: list[Claim], original_content: str) -> tuple[Decision
         reason = f"Reject: {rejected_count} semantic claims rejected"
         return Decision.REJECT, original_content, reason
 
-    # Rule 3: Some semantic claims rejected but within tolerance → strip
-    if rejected_count > 0:
-        # Strip rejected claims from content (simple approach)
+    # Rule 3: Some claims rejected or unverifiable → strip and re-evaluate
+    # Consolidate stripping for both rejected and unverifiable claims
+    if rejected_count > 0 or unverifiable_count > 0:
+        # First pass: strip unverifiable claims (validator unavailable)
         stripped_content = original_content
         for claim in claims:
-            if claim.verdict == ClaimVerdict.REJECTED and claim.claim_type == "semantic":
+            if claim.verdict == ClaimVerdict.UNVERIFIABLE and claim.claim_type == "semantic":
                 # Remove the claim text from content
                 stripped_content = stripped_content.replace(claim.text, "")
 
         stripped_content = stripped_content.strip()
         if not stripped_content:
-            reason = "Reject: Content empty after stripping rejected claims"
+            reason = "Reject: Content empty after stripping unverifiable claims"
             return Decision.REJECT, original_content, reason
 
-        reason = f"Approve (stripped): Removed {rejected_count} unsupported claims"
+        # Second pass: if rejected claims remain, strip them too
+        if rejected_count > 0:
+            for claim in claims:
+                if claim.verdict == ClaimVerdict.REJECTED and claim.claim_type == "semantic":
+                    stripped_content = stripped_content.replace(claim.text, "")
+
+            stripped_content = stripped_content.strip()
+            if not stripped_content:
+                reason = "Reject: Content empty after stripping rejected claims"
+                return Decision.REJECT, original_content, reason
+
+            reason = f"Approve (stripped): Removed {rejected_count} unsupported claims"
+            return Decision.APPROVE_STRIPPED, stripped_content, reason
+
+        # Only unverifiable claims were stripped
+        reason = f"Approve (stripped): Removed {unverifiable_count} unverifiable claims (validator unavailable)"
         return Decision.APPROVE_STRIPPED, stripped_content, reason
 
     # Rule 4: All confirmed → approve

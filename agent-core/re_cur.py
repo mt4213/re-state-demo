@@ -174,7 +174,7 @@ def main():
         _write_stream({"content": "", "tool_calls": [], "reasoning": "", "done": False}, force=True)
         response = re_lay.send_stream(messages, on_chunk=_stream_callback)
 
-        # Implicit-memory recall branch (Phase 2 — implicit_memory_v1.md)
+        # Implicit-memory recall branch (Phase 3 — implicit_memory_v1.md)
         # Guarded: feature flag, session budget, reasoning present, keyword hit.
         if (
             recall_module is not None
@@ -184,9 +184,31 @@ def main():
             and recall_module.should_recall(response["reasoning"])
         ):
             try:
-                recalled = recall_module.recall(response["reasoning"])
+                # Build richer context for recall (Phase 3)
+                recall_context = {"reasoning": response["reasoning"]}
+
+                # Include last user message if available
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        recall_context["user_message"] = msg.get("content", "")[:500]
+                        break
+
+                # Include recent tool results as context (last 2 tool results)
+                recent_tool_results = []
+                for msg in reversed(messages):
+                    if msg.get("role") == "tool" and msg.get("content"):
+                        tool_name = msg.get("name", "tool")  # tool result may have name
+                        content = msg.get("content", "")[:200]
+                        recent_tool_results.append(f"{tool_name}: {content}")
+                        if len(recent_tool_results) >= 2:
+                            break
+                if recent_tool_results:
+                    recall_context["last_actions"] = " | ".join(reversed(recent_tool_results))
+
+                # Call recall_context with rich context
+                recalled = recall_module.recall_context(recall_context)
             except Exception:
-                logger.exception("recall_module.recall raised unexpectedly — skipping")
+                logger.exception("recall_module.recall_context raised unexpectedly — skipping")
                 recalled = None
             if recalled:
                 messages.append({

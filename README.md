@@ -11,25 +11,25 @@ LLM_MODEL=<model name>
 # Run one agent session
 python3 agent-core/re_cur.py
 
-# Run benchmark (5 isolated runs)
-./run_experiment.sh 5
+# Run benchmark (N isolated runs)
+./run_experiment.sh N
 ```
 
 ## Architecture
 
-**Core Loop** (`agent-core/`):
-- `re_cur.py` — Cont(inuous)-Re(ason)-Act(tools) loop with message eviction and circuit breakers
-- `re_lay.py` — OpenAI-format client with terminal/file_read/file_write tools
-- `tools/execute.py` — Tool dispatch with protected path enforcement
-- `sealed_audit.py` — Tamper-proof audit log
+**Loop** (`agent-core/`):
+- `re_cur.py` Cont(inuous)-Re(ason)-Act(tools) loop with message eviction and circuit breakers
+- `re_lay.py` OpenAI-format client with terminal/file_read/file_write tools
+- `tools/execute.py` Tool dispatch with protected path enforcement
+- `sealed_audit.py` Tamper-proof audit log
 
 **Memory Pipeline** (`agent-core/memory/`):
-- `vector_store.py` — SQLite + cosine similarity search
-- `embed.py` — Text → 384d vectors (all-MiniLM-L6-v2)
-- `recall.py` — Keyword-gated retrieval with similarity threshold
-- `sleep_cycle.py` — Summarization + validation pipeline
-- `genesis.py` — Bootstrap memory generation for cold-start
-- `prune.py` — Bootstrap memory lifecycle management
+- `vector_store.py` SQLite + cosine similarity search
+- `embed.py` Text → 384d vectors
+- `recall.py` Keyword-gated retrieval with similarity threshold
+- `sleep_cycle.py` Summarization + validation pipeline
+- `genesis.py`  memory generation for cold-start
+- `prune.py` memory lifecycle management
 
 ## License
 

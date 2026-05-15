@@ -18,7 +18,7 @@ python3 agent-core/re_cur.py
 ## Architecture
 
 **Loop** (`agent-core/`):
-- `re_cur.py` Cont(inuous)-Re(ason)-Act(tools) loop with message eviction and circuit breakers
+- `re_cur.py` — Cont(inuous)-Re(ason)-Act(tools) loop with message eviction and circuit breakers. Pattern adapted from Stefan Szeider's ContReAct (see Acknowledgments).
 - `re_lay.py` OpenAI-format client with terminal/file_read/file_write tools
 - `tools/execute.py` Tool dispatch with protected path enforcement
 - `sealed_audit.py` Tamper-proof audit log
@@ -34,3 +34,12 @@ python3 agent-core/re_cur.py
 ## License
 
 Apache-2.0
+
+## Acknowledgments
+
+The continuous reason–act loop in `re_cur.py` is an independent
+implementation of the **ContReAct** pattern introduced by Stefan Szeider
+in *"What Do LLM Agents Do When Left Alone? Evidence of Spontaneous
+Meta-Cognitive Patterns"* ([arXiv:2509.21224](https://doi.org/10.48550/arXiv.2509.21224)).
+No code was used — only the concept. Reference implementation:
+[szeider/contreact](https://github.com/szeider/contreact).
